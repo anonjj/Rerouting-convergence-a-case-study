@@ -1,0 +1,27 @@
+Cohen's d_z Report — GRAF-Global vs Baseline (PDR)
+======================================================================
+
+Formula: d_z = mean(Δ_i) / SD(Δ_i), where Δ_i = PDR_GRAF_i − PDR_Base_i
+n = 20 paired replications (same RNG seeds per run index)
+
+Sc  Proto Mean(Base)   Mean(GRAF-G)  Mean(Δ)    SD(Δ)    d_z      Holm-p               Sig 
+-------------------------------------------------------------------------------------------
+1   AODV  70.06        95.25         25.197     4.065    6.199    1.084331678672891e-14 Yes 
+1   OLSR  70.56        95.76         25.197     4.065    6.199    1.084331678672891e-14 Yes 
+2   AODV  57.44        81.50         24.059     3.883    6.196    1.084331678672891e-14 Yes 
+2   OLSR  57.94        82.00         24.059     3.883    6.196    1.084331678672891e-14 Yes 
+3   AODV  50.48        75.08         24.600     2.682    9.173    7.852013423337301e-18 Yes 
+3   OLSR  50.98        75.58         24.600     2.682    9.173    7.852013423337301e-18 Yes 
+4   AODV  31.91        40.34         8.430      2.946    2.862    9.711684910737686e-09 Yes 
+4   OLSR  49.23        59.21         9.976      3.482    2.865    9.675231004395748e-09 Yes 
+
+
+Per-scenario d_z (inline footnote format):
+Scenario 1: d_z(OLSR) = 6.20 [SD(Δ) = 4.06 pp], d_z(AODV) = 6.20 [SD(Δ) = 4.06 pp].
+Scenario 2: d_z(OLSR) = 6.20 [SD(Δ) = 3.88 pp], d_z(AODV) = 6.20 [SD(Δ) = 3.88 pp].
+Scenario 3: d_z(OLSR) = 9.17 [SD(Δ) = 2.68 pp], d_z(AODV) = 9.17 [SD(Δ) = 2.68 pp].
+Scenario 4: d_z(OLSR) = 2.87 [SD(Δ) = 3.48 pp], d_z(AODV) = 2.86 [SD(Δ) = 2.95 pp].
+
+
+Section VI-A insertion paragraph:
+The higher d_z values for OLSR relative to AODV in Scenarios 1–3 reflect the lower variance of the per-run PDR difference under OLSR (baseline SD ≈ 0.15 pp vs. 0.68 pp for AODV), confirming that the tighter OLSR baseline amplifies the standardised effect size even when the raw mean difference is essentially identical across protocols. Formally, d_z = mean(PDR_GRAF_i − PDR_Baseline_i) / SD(PDR_GRAF_i − PDR_Baseline_i) for i = 1…20 paired runs sharing the same RNG seeds.

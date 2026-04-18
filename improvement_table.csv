@@ -1,0 +1,17 @@
+Scenario,Protocol,Mode vs Baseline,ΔPDR (pp),ΔThroughput (kbps),ΔRx Packets,ΔJain Fairness
+1,AODV,GRAF-Global vs Baseline,+25.20,+2.91,+1068.35,+0.20
+1,AODV,GRAF-Local vs Baseline,+19.74,+2.28,+837.15,+0.17
+1,OLSR,GRAF-Global vs Baseline,+25.20,+2.91,+1068.35,+0.20
+1,OLSR,GRAF-Local vs Baseline,+19.32,+2.23,+819.15,+0.16
+2,AODV,GRAF-Global vs Baseline,+24.06,+2.78,+1020.10,+0.18
+2,AODV,GRAF-Local vs Baseline,+24.82,+2.87,+1052.25,+0.17
+2,OLSR,GRAF-Global vs Baseline,+24.06,+2.78,+1020.10,+0.17
+2,OLSR,GRAF-Local vs Baseline,+24.68,+2.85,+1046.25,+0.16
+3,AODV,GRAF-Global vs Baseline,+24.60,+2.84,+1043.05,+0.14
+3,AODV,GRAF-Local vs Baseline,+22.67,+2.62,+961.35,+0.13
+3,OLSR,GRAF-Global vs Baseline,+24.60,+2.84,+1043.05,+0.13
+3,OLSR,GRAF-Local vs Baseline,+22.53,+2.60,+955.35,+0.12
+4,AODV,GRAF-Global vs Baseline,+8.43,+0.97,+357.45,+0.12
+4,AODV,GRAF-Local vs Baseline,+8.28,+0.96,+350.95,+0.11
+4,OLSR,GRAF-Global vs Baseline,+9.98,+1.15,+423.00,+0.06
+4,OLSR,GRAF-Local vs Baseline,+10.32,+1.19,+437.65,+0.06
