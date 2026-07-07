@@ -106,9 +106,13 @@ void DetectAndRecoverCluster(uint32_t failedChIndex, double detectTime) {
 
   RehomeClusterSensors(failedChIndex, backupIdx);
 
-  // FIX-A4: arm event-driven SRL watches for every sensor in the failed cluster
+  // FIX-A4 (corrected): arm SRL watches ONLY for sensors actually rehomed to the
+  // backup — i.e. those within its access range, the same set RehomeClusterSensors
+  // moves. Arming unreachable/non-rehomed sensors let stale in-flight packets be
+  // miscounted as "first Rx after recovery", biasing mean_reconv_eventdriven_s low.
   for (uint32_t sIdx : g_clusterMembers[failedChIndex]) {
-    if (!g_clusterRecoveryWatchStart.count(sIdx)) {
+    if (SensorCanReachBackup(sIdx, backupIdx) &&
+        !g_clusterRecoveryWatchStart.count(sIdx)) {
       g_clusterRecoveryWatchStart[sIdx] = detectTime;
     }
   }
