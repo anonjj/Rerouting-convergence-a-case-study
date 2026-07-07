@@ -144,11 +144,13 @@ void HandleChDeath(uint32_t chIndex, double deathTime,
 
   g_chAlive[nodeId] = false;
 
-  // If this CH was itself a promoted backup with a pre-selected successor,
-  // drop that entry — it is no longer relevant.
-  g_chSuccessor.erase(chIndex);
-  // If this CH was pre-selected as a successor for some other backup CH,
-  // remove those entries so the stale candidate is not used at recovery time.
+  // FIX (#1): do NOT erase g_chSuccessor[chIndex] here. That entry is this CH's
+  // own pre-selected successor, which the scheduled DetectAndRecoverCluster(chIndex)
+  // consumes ~g_detectionDelay s from now via the GRAF-Global fast path (it erases
+  // the entry itself, "consume regardless of outcome"). Erasing it at death time
+  // made that fast path unreachable — every recovery fell back to full re-scoring.
+  // We DO still invalidate entries where this CH was pre-selected as some other
+  // backup CH's successor, so a dead candidate is not used at recovery time.
   for (auto it = g_chSuccessor.begin(); it != g_chSuccessor.end(); ) {
     if (it->second == chIndex) {
       NS_LOG_UNCOND("  [GRAF-GLOBAL] Invalidated stale successor idx=" << chIndex
