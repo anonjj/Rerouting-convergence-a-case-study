@@ -724,9 +724,12 @@ int main(int argc, char *argv[]) {
                             std::to_string(runNumber) + "_tsi.csv";
   std::ofstream tsiLog(tsiFilename);
   tsiLog << "time,tsi,region,ch_alive,ch_dead\n";
-  if (g_recoveryEnabled)
-    Simulator::Schedule(Seconds(dataStartBase), &LogTSI, &tsiLog, 10.0,
-                        simTime);
+  // FIX (#2): schedule TSI logging for ALL runs, not just recovery-enabled ones.
+  // ComputeTSI records the backbone partition timestamp (g_partitionTime); gating
+  // this on g_recoveryEnabled left every baseline run writing partition_time_s = -1
+  // even when the backbone actually partitioned, defeating the FIX-C2 comparison.
+  Simulator::Schedule(Seconds(dataStartBase), &LogTSI, &tsiLog, 10.0,
+                      simTime);
 
   // ---------------------------------------------------------------------------
   // Run
