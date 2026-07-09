@@ -64,8 +64,8 @@ All numbers come from 480 NS-3.39 simulation runs (20 replications × 2 protocol
 | Scenario | Description | GRAF-Global PDR Gain | Cluster Recovery |
 |----------|-------------|---------------------|-----------------|
 | 1 — Mild | 3 CH failures, nominal energy | **+25.2 pp** | 100% |
-| 2 — Moderate | 4 failures, reduced energy | **+24.1 pp** | 100% |
-| 3 — Severe | 6 failures, low energy | **+24.6 pp** | ~98% |
+| 2 — Moderate | 5 failures, reduced energy | **+24.1 pp** | 100% |
+| 3 — Severe | 7 failures, low energy | **+24.6 pp** | ~98% |
 | 4 — Extreme | 7 of 8 CHs fail + 30% range cut | positive, narrower | 63–76% |
 
 - All Scenario 1–3 gains: **Holm-adjusted p < 10⁻¹⁴**, Cohen's d ≥ 6.20
