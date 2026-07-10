@@ -35,14 +35,18 @@ uint32_t SelectGraphAwareBackup(uint32_t failedChIndex) {
   double aBeta  = g_beta;
   double aGamma = g_gamma;
   double aDelta = g_delta;
+  // aLoad gates the load-balancing penalty: it is part of full GRAF, but a
+  // single-term ablation must exclude it, otherwise every ablation condition is
+  // silently "term X + load balancing" rather than "term X alone".
+  double aLoad  = 1.0;
   if (g_ablation == "energy") {
-    aAlpha = 1.0; aBeta = 0.0; aGamma = 0.0; aDelta = 0.0;
+    aAlpha = 1.0; aBeta = 0.0; aGamma = 0.0; aDelta = 0.0; aLoad = 0.0;
     NS_LOG_UNCOND("  [ABLATION] energy-only weights active");
   } else if (g_ablation == "topo") {
-    aAlpha = 0.0; aBeta = 1.0; aGamma = 0.0; aDelta = 0.0;
+    aAlpha = 0.0; aBeta = 1.0; aGamma = 0.0; aDelta = 0.0; aLoad = 0.0;
     NS_LOG_UNCOND("  [ABLATION] topology(BC)-only weights active");
   } else if (g_ablation == "proxcov") {
-    aAlpha = 0.0; aBeta = 0.0; aGamma = 0.5; aDelta = 0.5;
+    aAlpha = 0.0; aBeta = 0.0; aGamma = 0.5; aDelta = 0.5; aLoad = 0.0;
     NS_LOG_UNCOND("  [ABLATION] proximity+coverage-only weights active");
   }
   // "full" keeps defaults above
@@ -102,7 +106,7 @@ uint32_t SelectGraphAwareBackup(uint32_t failedChIndex) {
     double bcNorm = (maxBc > 0.0) ? (c.bc / maxBc) : 0.0;
     double hopPenalty =
         (maxHop > 0) ? static_cast<double>(c.hops) / maxHop : 0.0;
-    double loadPenalty = 0.15 * g_backupLoad[c.idx];
+    double loadPenalty = aLoad * 0.15 * g_backupLoad[c.idx];
 
     // Use ablation-adjusted weights (aAlpha/aBeta/aGamma/aDelta)
     double score = aAlpha * eNorm + aBeta * bcNorm +

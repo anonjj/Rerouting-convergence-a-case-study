@@ -136,8 +136,8 @@ fitness(v) = α · E_residual(v)       // remaining battery (weight 0.35)
 | `--graf` | `off`, `global`, `local` | Recovery mode |
 | `--baseline` | `none`, `rand`, `energy`, `nearest` | Competitive baseline strategy |
 | `--ablation` | `full`, `energy`, `topo`, `proxcov` | Fitness function ablation (GRAF-Global only) |
-| `--numCHs` | integer | Number of cluster heads (default: 8) |
-| `--numSensors` | integer | Number of sensor nodes (default: 80) |
+| `--chs` | integer | Number of cluster heads (default: 8) |
+| `--sensors` | integer | Number of sensor nodes (default: 80) |
 | `--deathfrac` | float | Fraction of CHs to fail (overrides scenario default) |
 
 ### Run All 480 Simulations
