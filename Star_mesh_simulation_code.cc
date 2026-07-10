@@ -840,6 +840,39 @@ int main(int argc, char *argv[]) {
   }
   double totalConsumedEnergy = totalInitialEnergy - totalResidualEnergy;
 
+  // [DIAG-E1] Per-CH, per-radio energy breakdown.
+  //
+  // The aggregate above sums 16 radios (backbone + access for each of 8 CHs) and
+  // hides which one fails to register GRAF's forwarded traffic: baseline and
+  // GRAF-Global end with bit-identical residual energy despite GRAF delivering
+  // ~930 more packets through these same CHs. Splitting per device localises it.
+  //
+  // Model order within a source follows Install() order in the setup loop:
+  // index 0 = backbone radio, index 1 = access radio. energyModelsPerCh records
+  // GetN() so that assumption is checkable from the CSV rather than assumed.
+  std::vector<double> chBackboneEnergy(numCHs, -1.0);
+  std::vector<double> chAccessEnergy(numCHs, -1.0);
+  std::vector<double> chResidualEnergy(numCHs, -1.0);
+  uint32_t energyModelsPerCh = 0;
+  for (uint32_t c = 0; c < numCHs; ++c) {
+    Ptr<EnergySource> src = g_chEnergyPtr->Get(c);
+    if (!src) {
+      continue;
+    }
+    chResidualEnergy[c] = src->GetRemainingEnergy();
+    DeviceEnergyModelContainer models =
+        src->FindDeviceEnergyModels("ns3::WifiRadioEnergyModel");
+    if (c == 0) {
+      energyModelsPerCh = models.GetN();
+    }
+    if (models.GetN() >= 1) {
+      chBackboneEnergy[c] = models.Get(0)->GetTotalEnergyConsumption();
+    }
+    if (models.GetN() >= 2) {
+      chAccessEnergy[c] = models.Get(1)->GetTotalEnergyConsumption();
+    }
+  }
+
   // Legacy energy-per-delivered-bit (kept for backward compatibility)
   double energyPerDeliveredBit =
       (totalRxBytes > 0 && totalConsumedEnergy > 0.0)
@@ -1051,6 +1084,22 @@ int main(int argc, char *argv[]) {
               << "ch_energy_consumed_hires," << totalConsumedEnergy << "\n"
               << "ch_energy_initial_hires,"  << totalInitialEnergy  << "\n"
               << "ch_energy_residual_hires," << totalResidualEnergy << "\n";
+  // [DIAG-E1] Per-CH, per-radio breakdown. Sum of all chN_*_energy_j should
+  // reconcile with ch_energy_consumed_hires; a shortfall means some radio's
+  // WifiRadioEnergyModel is not accumulating.
+  summaryFile << "energy_models_per_ch," << energyModelsPerCh << "\n";
+  double sumBackbone = 0.0, sumAccess = 0.0;
+  for (uint32_t c = 0; c < numCHs; ++c) {
+    summaryFile << "ch" << c << "_backbone_energy_j," << chBackboneEnergy[c] << "\n";
+    summaryFile << "ch" << c << "_access_energy_j,"   << chAccessEnergy[c]   << "\n";
+    summaryFile << "ch" << c << "_residual_energy_j," << chResidualEnergy[c] << "\n";
+    if (chBackboneEnergy[c] > 0.0) sumBackbone += chBackboneEnergy[c];
+    if (chAccessEnergy[c]   > 0.0) sumAccess   += chAccessEnergy[c];
+  }
+  summaryFile << "sum_backbone_energy_j," << sumBackbone << "\n";
+  summaryFile << "sum_access_energy_j,"   << sumAccess   << "\n";
+  summaryFile << "sum_radio_energy_j,"    << (sumBackbone + sumAccess) << "\n";
+  summaryFile << "radio_vs_source_gap_j," << (totalConsumedEnergy - sumBackbone - sumAccess) << "\n";
   summaryFile << std::defaultfloat << std::setprecision(6); // restore default
   // IEEE IoT Journal convention (primary): η = E_consumed / (PDR × OfferedBits)
   summaryFile << "energy_per_bit_j," << etaIeee << "\n";
