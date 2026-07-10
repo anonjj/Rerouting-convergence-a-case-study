@@ -74,3 +74,11 @@ static std::vector<ClusterSnapshot> g_clusterSnapshots;
 // before graf_logging.h's SinkRxCallback reads them.
 static std::map<uint32_t, double> g_sinkFirstRxAfterRecovery;
 static std::map<uint32_t, double> g_clusterRecoveryWatchStart;
+
+// [DIAG-E2] Per-CH PHY frame counters, one entry per CH index.
+// Distinguishes "the radio never transmitted" from "the radio transmitted but
+// the energy model charged nothing for it". Indexed identically to g_chPositions.
+static std::vector<uint64_t> g_chBackboneTxFrames;
+static std::vector<uint64_t> g_chBackboneRxFrames;
+static std::vector<uint64_t> g_chAccessTxFrames;
+static std::vector<uint64_t> g_chAccessRxFrames;

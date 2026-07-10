@@ -488,10 +488,35 @@ int main(int argc, char *argv[]) {
   chRadioHelper.Set("IdleCurrentA", DoubleValue(0.000426 * 2.0));
   chRadioHelper.Set("SleepCurrentA", DoubleValue(0.000014));
 
+  // [DIAG-E2] Count PHY frames per CH radio alongside the energy models, so a
+  // radio that transmits but is charged nothing can be told apart from a radio
+  // the traffic never crossed. Trace sinks only — no scheduled events, no RNG.
+  g_chBackboneTxFrames.assign(numCHs, 0);
+  g_chBackboneRxFrames.assign(numCHs, 0);
+  g_chAccessTxFrames.assign(numCHs, 0);
+  g_chAccessRxFrames.assign(numCHs, 0);
+
   for (uint32_t c = 0; c < numCHs; ++c) {
     chRadioHelper.Install(backboneDevices.Get(c), chEnergySources.Get(c));
     chRadioHelper.Install(chAccessDevices.Get(c), chEnergySources.Get(c));
     g_chAlive[chNodes.Get(c)->GetId()] = true;
+
+    Ptr<WifiNetDevice> bbDev =
+        DynamicCast<WifiNetDevice>(backboneDevices.Get(c));
+    Ptr<WifiNetDevice> acDev =
+        DynamicCast<WifiNetDevice>(chAccessDevices.Get(c));
+    if (bbDev && bbDev->GetPhy()) {
+      bbDev->GetPhy()->TraceConnectWithoutContext(
+          "PhyTxBegin", MakeBoundCallback(&CountPhyTx, &g_chBackboneTxFrames, c));
+      bbDev->GetPhy()->TraceConnectWithoutContext(
+          "PhyRxEnd", MakeBoundCallback(&CountPhyRx, &g_chBackboneRxFrames, c));
+    }
+    if (acDev && acDev->GetPhy()) {
+      acDev->GetPhy()->TraceConnectWithoutContext(
+          "PhyTxBegin", MakeBoundCallback(&CountPhyTx, &g_chAccessTxFrames, c));
+      acDev->GetPhy()->TraceConnectWithoutContext(
+          "PhyRxEnd", MakeBoundCallback(&CountPhyRx, &g_chAccessRxFrames, c));
+    }
   }
 
   BasicEnergySourceHelper gwEnergyHelper;
@@ -1101,6 +1126,16 @@ int main(int argc, char *argv[]) {
   summaryFile << "sum_radio_energy_j,"    << (sumBackbone + sumAccess) << "\n";
   summaryFile << "radio_vs_source_gap_j," << (totalConsumedEnergy - sumBackbone - sumAccess) << "\n";
   summaryFile << std::defaultfloat << std::setprecision(6); // restore default
+
+  // [DIAG-E2] PHY frame counts per CH radio. If a CH's backbone Tx count rises
+  // between baseline and GRAF while its backbone energy does not, the energy
+  // model is not charging for transmissions it observed.
+  for (uint32_t c = 0; c < numCHs; ++c) {
+    summaryFile << "ch" << c << "_backbone_tx_frames," << g_chBackboneTxFrames[c] << "\n";
+    summaryFile << "ch" << c << "_backbone_rx_frames," << g_chBackboneRxFrames[c] << "\n";
+    summaryFile << "ch" << c << "_access_tx_frames,"   << g_chAccessTxFrames[c]   << "\n";
+    summaryFile << "ch" << c << "_access_rx_frames,"   << g_chAccessRxFrames[c]   << "\n";
+  }
   // IEEE IoT Journal convention (primary): η = E_consumed / (PDR × OfferedBits)
   summaryFile << "energy_per_bit_j," << etaIeee << "\n";
   // Legacy metric (E per IP-layer received bit) — backward compatibility only
