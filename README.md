@@ -259,16 +259,39 @@ grep ',FAIL,' sim_results_v3/run_manifest.csv  # should be empty
 
 ### Extended Sweep
 
-`run_extended_sweep.sh` covers the additional experiments added during the reviewer response:
-competitive baselines (rand/energy/nearest), the fitness-function ablation, scalability at
-Nc = 16 and 32, and extra Scenario 4 replications.
+`run_extended_sweep.sh` covers the additional experiments added during the reviewer response.
+It contains four independent sweeps:
+
+| `SWEEPS` | Sweep | Cells | Runs |
+|---|---|---|---|
+| `1` | Competitive baselines | 3 baselines × 4 scenarios × 2 protocols × 20 seeds | 480 |
+| `2` | Fitness ablation | 3 ablations × 4 scenarios × 2 protocols × 20 seeds | 480 |
+| `3` | Scalability (Nc = 16, 32) | 2 sizes × 2 protocols × 3 modes × 20 seeds | 240 |
+| `4` | Scenario 4 strengthening | 1 scenario × 3 modes × 2 protocols × 30 seeds | 180 |
+
+Running it bare generates all **1,380** jobs, which is rarely what you want. Select sweeps and
+cells with `SWEEPS`, `SCENARIOS`, and `PROTOCOLS`:
 
 ```bash
-bash ~/graf-src/run_extended_sweep.sh
+SWEEPS=1 SCENARIOS=3 ./run_extended_sweep.sh                 # baselines, Sc3 only  -> 120 runs
+SWEEPS=2 SCENARIOS=3 PROTOCOLS=OLSR ./run_extended_sweep.sh  # ablation, Sc3/OLSR   ->  60 runs
+SWEEPS=3 ./run_extended_sweep.sh                             # scalability          -> 240 runs
 ```
 
-Honours `NS3_ROOT`, `SCRATCH_NAME`, `OUTDIR`, and `PARALLEL_JOBS` from the environment;
-defaults match what `graf_deploy_smoke.sh` produces.
+`SCENARIOS` applies to sweeps 1 and 2 only — sweeps 3 and 4 are pinned to Scenario 2 and
+Scenario 4 by design. All three variables accept comma- or space-separated lists.
+
+Set `DRY_RUN=1` to generate and count the job list without building or running anything —
+useful for confirming a selection produces the cell count you expect before committing the
+machine to it.
+
+Also honours `NS3_ROOT`, `SCRATCH_NAME`, `OUTDIR`, and `PARALLEL_JOBS`; defaults match what
+`graf_deploy_smoke.sh` produces.
+
+**The ablation sweep must run with `--graf=global`.** `SelectLocalBackup` uses a fixed weight
+set and ignores the `--ablation` flag entirely, so an ablation run under `--graf=local` would
+silently report full-GRAF numbers. Likewise the baseline sweep must run with `--graf=off` —
+a baseline strategy is ignored unless GRAF is off. The script already emits both correctly.
 
 ### Analyze Results
 

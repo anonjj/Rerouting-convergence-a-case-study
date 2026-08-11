@@ -5,7 +5,7 @@
 # Covers all five reviewer fault fixes requiring additional simulation runs:
 #
 # [FAULT-4]  Competitive Baselines: RAND / ENERGY / NEAREST
-#            3 baselines × 4 scenarios × 2 protocols × 20 seeds = 240 runs
+#            3 baselines × 4 scenarios × 2 protocols × 20 seeds = 480 runs
 #
 # [FAULT-5]  Fitness Ablation Study: energy-only / topo-only / proxcov-only
 #            3 ablations × 4 scenarios × 2 protocols × 20 seeds = 480 runs
@@ -19,7 +19,7 @@
 #            1 scenario × 3 modes × 2 protocols × 30 extra seeds = 180 runs
 #            (20 seeds already done; 30 additional seeds = runs 21-50)
 #
-# Total new runs: 240 + 480 + 240 + 180 = 1,140
+# Total new runs: 480 + 480 + 240 + 180 = 1,380
 #
 # Usage:
 #   chmod +x run_extended_sweep.sh
@@ -39,6 +39,33 @@ NS3_ROOT="${NS3_ROOT:-$HOME/ns-allinone-3.39/ns-3.39}"  # NS-3.39 build director
 SCRATCH_NAME="${SCRATCH_NAME:-hybrid-star-mesh-sim}"    # Name of .cc in scratch/
 OUTDIR="${OUTDIR:-sim_results_extended}"                # Output dir for this sweep
 PARALLEL_JOBS="${PARALLEL_JOBS:-3}"                     # Parallel simulation jobs
+
+# Sweep selection. Running everything is ~1,380 jobs, which is rarely what you
+# want -- gate it down to the sweeps and cells you actually need.
+#   SWEEPS     which of the four sweeps to generate (1=baselines, 2=ablation,
+#              3=scalability, 4=Sc4 strengthening)
+#   SCENARIOS  scenarios for sweeps 1 and 2 only; sweeps 3 and 4 are pinned to
+#              Scenario 2 and Scenario 4 respectively by design
+#   PROTOCOLS  routing protocols, applies to all sweeps
+#
+# Examples:
+#   SWEEPS=1 SCENARIOS=3 ./run_extended_sweep.sh                   # 120 runs
+#   SWEEPS=2 SCENARIOS=3 PROTOCOLS=OLSR ./run_extended_sweep.sh    #  60 runs
+#   SWEEPS=3 ./run_extended_sweep.sh                               # 240 runs
+SWEEPS="${SWEEPS:-1 2 3 4}"
+SCENARIOS="${SCENARIOS:-1 2 3 4}"
+PROTOCOLS="${PROTOCOLS:-OLSR AODV}"
+# Accept comma-separated lists as well as space-separated.
+SWEEPS="${SWEEPS//,/ }"
+SCENARIOS="${SCENARIOS//,/ }"
+PROTOCOLS="${PROTOCOLS//,/ }"
+
+# True when sweep $1 is in $SWEEPS.
+sweep_enabled() {
+  local want="$1" s
+  for s in $SWEEPS; do [ "$s" = "$want" ] && return 0; done
+  return 1
+}
 # -----------------------------------------------------------------------------
 
 cd "$NS3_ROOT" || { echo "ERROR: NS3_ROOT not found: $NS3_ROOT"; exit 1; }
@@ -109,11 +136,12 @@ RUNS_SC4_EXTRA=30   # runs 21-50
 # =============================================================================
 # SWEEP 1: Competitive Baselines [FAULT-4]
 # --baseline=rand/energy/nearest, --graf=off
-# 3 baselines × 4 scenarios × 2 protocols × 20 seeds = 240 runs
+# 3 baselines × 4 scenarios × 2 protocols × 20 seeds = 480 runs
 # =============================================================================
+if sweep_enabled 1; then
 echo "=== Generating SWEEP 1: Competitive Baselines [FAULT-4] ==="
-for proto in OLSR AODV; do
-  for sc in 1 2 3 4; do
+for proto in $PROTOCOLS; do
+  for sc in $SCENARIOS; do
     for baseline in rand energy nearest; do
       for run in $(seq 1 $RUNS_STD); do
         seed=${SEEDS_STD[$run]}
@@ -123,15 +151,17 @@ for proto in OLSR AODV; do
   done
 done
 echo "  Fault-4 jobs appended."
+else echo "=== SWEEP 1 skipped (not in SWEEPS=$SWEEPS) ==="; fi
 
 # =============================================================================
 # SWEEP 2: Fitness Ablation Study [FAULT-5]
 # --graf=global, --ablation=energy/topo/proxcov, --baseline=none
 # 3 ablations × 4 scenarios × 2 protocols × 20 seeds = 480 runs
 # =============================================================================
+if sweep_enabled 2; then
 echo "=== Generating SWEEP 2: Fitness Ablation [FAULT-5] ==="
-for proto in OLSR AODV; do
-  for sc in 1 2 3 4; do
+for proto in $PROTOCOLS; do
+  for sc in $SCENARIOS; do
     for ablation in energy topo proxcov; do
       for run in $(seq 1 $RUNS_STD); do
         seed=${SEEDS_STD[$run]}
@@ -141,6 +171,7 @@ for proto in OLSR AODV; do
   done
 done
 echo "  Fault-5 jobs appended."
+else echo "=== SWEEP 2 skipped (not in SWEEPS=$SWEEPS) ==="; fi
 
 # =============================================================================
 # SWEEP 3: Scalability Validation [FAULT-9]
@@ -148,8 +179,9 @@ echo "  Fault-5 jobs appended."
 # Sizes: medium (16 CHs, 160 sensors), large (32 CHs, 320 sensors)
 # 2 sizes × 2 protocols × 3 modes × 20 seeds = 240 runs
 # =============================================================================
+if sweep_enabled 3; then
 echo "=== Generating SWEEP 3: Scalability [FAULT-9] ==="
-for proto in OLSR AODV; do
+for proto in $PROTOCOLS; do
   # Medium scale: 16 CHs, 160 sensors
   for mode in off local global; do
     for run in $(seq 1 $RUNS_STD); do
@@ -166,6 +198,7 @@ for proto in OLSR AODV; do
   done
 done
 echo "  Fault-9 jobs appended."
+else echo "=== SWEEP 3 skipped (not in SWEEPS=$SWEEPS) ==="; fi
 
 # =============================================================================
 # SWEEP 4: Scenario 4 Statistical Strengthening [FAULT-2 & 10]
@@ -173,8 +206,9 @@ echo "  Fault-9 jobs appended."
 # 1 scenario × 3 modes × 2 protocols × 30 extra seeds = 180 runs
 # Seeds use 10^6 spacing starting at run 21 (i.e., seed = 21_000_000 ...).
 # =============================================================================
+if sweep_enabled 4; then
 echo "=== Generating SWEEP 4: Sc4 Statistical Strengthening [FAULT-2&10] ==="
-for proto in OLSR AODV; do
+for proto in $PROTOCOLS; do
   for mode in off local global; do
     for run in $(seq 21 50); do
       seed=${SEEDS_SC4_EXTRA[$run]}
@@ -183,6 +217,7 @@ for proto in OLSR AODV; do
   done
 done
 echo "  Fault-2&10 Sc4 jobs appended."
+else echo "=== SWEEP 4 skipped (not in SWEEPS=$SWEEPS) ==="; fi
 
 # =============================================================================
 # Summary and execution
@@ -191,13 +226,27 @@ TOTAL_JOBS=$(wc -l < "$JOBS_FILE" | tr -d ' ')
 echo ""
 echo "============================================="
 echo "Total jobs generated: $TOTAL_JOBS"
-echo "Expected:             1140"
+echo "  SWEEPS=$SWEEPS  SCENARIOS=$SCENARIOS  PROTOCOLS=$PROTOCOLS"
+echo "  (all four sweeps, all scenarios, both protocols = 1380)"
+echo "Per-sweep breakdown:"
+SWEEP_TAGS=("F4base" "F5abl" "F9scale" "F2F10sc4")
+for s in 1 2 3 4; do
+  tag="${SWEEP_TAGS[$((s-1))]}"
+  n=$(grep -c "$tag" "$JOBS_FILE" 2>/dev/null || true)
+  printf '  sweep %s (%-9s): %s\n' "$s" "$tag" "${n:-0}"
+done
 echo "Jobs file:            $JOBS_FILE"
 echo "============================================="
 
-if [ "$TOTAL_JOBS" -ne 1140 ]; then
-  echo "WARNING: Job count mismatch! Expected 1140, got $TOTAL_JOBS."
-  echo "Check sweep logic before proceeding."
+if [ "$TOTAL_JOBS" -eq 0 ]; then
+  echo "Nothing to run -- SWEEPS=$SWEEPS selected no jobs."
+  exit 0
+fi
+
+# DRY_RUN=1 stops here: inspect $JOBS_FILE without building or running anything.
+if [ -n "${DRY_RUN:-}" ]; then
+  echo "DRY_RUN set -- job list written, not building or executing."
+  exit 0
 fi
 
 echo ""
