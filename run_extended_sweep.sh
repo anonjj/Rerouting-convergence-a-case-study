@@ -1,0 +1,227 @@
+#!/bin/bash
+# =============================================================================
+# run_extended_sweep.sh — Reviewer Revision Extended Simulation Sweep
+# =============================================================================
+# Covers all five reviewer fault fixes requiring additional simulation runs:
+#
+# [FAULT-4]  Competitive Baselines: RAND / ENERGY / NEAREST
+#            3 baselines × 4 scenarios × 2 protocols × 20 seeds = 240 runs
+#
+# [FAULT-5]  Fitness Ablation Study: energy-only / topo-only / proxcov-only
+#            3 ablations × 4 scenarios × 2 protocols × 20 seeds = 480 runs
+#            (all run with --graf=global, --baseline=none)
+#
+# [FAULT-9]  Scalability: medium (Nc=16,Ns=160) and large (Nc=32,Ns=320)
+#            Scenario 2 (Moderate), deathfrac=0.625 (proportional to 5/8)
+#            2 sizes × 2 protocols × 3 modes × 20 seeds = 240 runs
+#
+# [FAULT-2&10] Sc4 Statistical Strengthening: n=50, seeds spaced by 10^6
+#            1 scenario × 3 modes × 2 protocols × 30 extra seeds = 180 runs
+#            (20 seeds already done; 30 additional seeds = runs 21-50)
+#
+# Total new runs: 240 + 480 + 240 + 180 = 1,140
+#
+# Usage:
+#   chmod +x run_extended_sweep.sh
+#   ./run_extended_sweep.sh
+#
+# Defaults assume the layout produced by graf_deploy_smoke.sh. Override with
+# env vars if your install differs, e.g.:
+#   NS3_ROOT=~/ns-3.39 PARALLEL_JOBS=8 ./run_extended_sweep.sh
+# =============================================================================
+
+set -uo pipefail
+
+# ---------------- User Configuration ----------------------------------------
+# Defaults match graf_deploy_smoke.sh, which stages the sources into
+# scratch/hybrid-star-mesh-sim.cc. Override any of these from the environment.
+NS3_ROOT="${NS3_ROOT:-$HOME/ns-allinone-3.39/ns-3.39}"  # NS-3.39 build directory
+SCRATCH_NAME="${SCRATCH_NAME:-hybrid-star-mesh-sim}"    # Name of .cc in scratch/
+OUTDIR="${OUTDIR:-sim_results_extended}"                # Output dir for this sweep
+PARALLEL_JOBS="${PARALLEL_JOBS:-3}"                     # Parallel simulation jobs
+# -----------------------------------------------------------------------------
+
+cd "$NS3_ROOT" || { echo "ERROR: NS3_ROOT not found: $NS3_ROOT"; exit 1; }
+
+mkdir -p "$OUTDIR/raw" "$OUTDIR/logs"
+
+JOBS_FILE="$OUTDIR/extended_jobs.txt"
+> "$JOBS_FILE"
+
+MANIFEST="$OUTDIR/run_manifest_extended.csv"
+echo "sweep,protocol,scenario,mode,baseline,ablation,num_chs,num_sensors,run,seed,status,logfile,prefix" > "$MANIFEST"
+
+# ─── Helper: emit one job line ────────────────────────────────────────────────
+# Usage: emit_job SWEEP PROTOCOL SCENARIO MOD BASELINE ABLATION NUMCHS NUMSENSORS RUN SEED [EXTRA_ARGS]
+emit_job() {
+  local sweep="$1"
+  local proto="$2"
+  local sc="$3"
+  local graf_mode="$4"
+  local baseline="$5"
+  local ablation="$6"
+  local num_chs="$7"
+  local num_sensors="$8"
+  local run="$9"
+  local seed="${10}"
+  local extra="${11:-}"
+
+  local prefix="$OUTDIR/raw/${sweep}_${proto}_sc${sc}_${graf_mode}_bl${baseline}_abl${ablation}_chs${num_chs}_run${run}"
+  local logfile="$OUTDIR/logs/${sweep}_${proto}_sc${sc}_${graf_mode}_bl${baseline}_abl${ablation}_chs${num_chs}_run${run}.log"
+
+  local cmd="./ns3 run 'scratch/$SCRATCH_NAME \
+    --protocol=$proto \
+    --scenario=$sc \
+    --graf=$graf_mode \
+    --baseline=$baseline \
+    --ablation=$ablation \
+    --chs=$num_chs \
+    --sensors=$num_sensors \
+    --seed=$seed \
+    --run=$run \
+    --output=$prefix \
+    $extra' > '$logfile' 2>&1"
+
+  local log_ok="echo '${sweep},${proto},${sc},${graf_mode},${baseline},${ablation},${num_chs},${num_sensors},${run},${seed},OK,${logfile},${prefix}' >> '$MANIFEST'"
+  local log_fail="echo '${sweep},${proto},${sc},${graf_mode},${baseline},${ablation},${num_chs},${num_sensors},${run},${seed},FAIL,${logfile},${prefix}' >> '$MANIFEST'"
+
+  echo "if eval \"$cmd\"; then eval \"$log_ok\"; else eval \"$log_fail\"; echo 'FAILED: $sweep $proto sc$sc $graf_mode bl=$baseline abl=$ablation chs=$num_chs run$run'; fi" >> "$JOBS_FILE"
+}
+
+# ─── Seed strategies ─────────────────────────────────────────────────────────
+# [FAULT-2&10] Widely-spaced seeds: seed_i = i * 1,000,000
+# This ensures NS-3 RNG streams are truly independent across replication runs.
+# Standard runs (fault4/5/9): seeds 1..20 with spacing 10^6
+declare -a SEEDS_STD
+for i in $(seq 1 20); do
+  SEEDS_STD[$i]=$(( i * 1000000 ))
+done
+
+# Sc4 extra seeds (fault 2&10): runs 21..50 with same spacing
+declare -a SEEDS_SC4_EXTRA
+for i in $(seq 21 50); do
+  SEEDS_SC4_EXTRA[$i]=$(( i * 1000000 ))
+done
+
+RUNS_STD=20
+RUNS_SC4_EXTRA=30   # runs 21-50
+
+# =============================================================================
+# SWEEP 1: Competitive Baselines [FAULT-4]
+# --baseline=rand/energy/nearest, --graf=off
+# 3 baselines × 4 scenarios × 2 protocols × 20 seeds = 240 runs
+# =============================================================================
+echo "=== Generating SWEEP 1: Competitive Baselines [FAULT-4] ==="
+for proto in OLSR AODV; do
+  for sc in 1 2 3 4; do
+    for baseline in rand energy nearest; do
+      for run in $(seq 1 $RUNS_STD); do
+        seed=${SEEDS_STD[$run]}
+        emit_job "F4base" "$proto" "$sc" "off" "$baseline" "full" "8" "80" "$run" "$seed" ""
+      done
+    done
+  done
+done
+echo "  Fault-4 jobs appended."
+
+# =============================================================================
+# SWEEP 2: Fitness Ablation Study [FAULT-5]
+# --graf=global, --ablation=energy/topo/proxcov, --baseline=none
+# 3 ablations × 4 scenarios × 2 protocols × 20 seeds = 480 runs
+# =============================================================================
+echo "=== Generating SWEEP 2: Fitness Ablation [FAULT-5] ==="
+for proto in OLSR AODV; do
+  for sc in 1 2 3 4; do
+    for ablation in energy topo proxcov; do
+      for run in $(seq 1 $RUNS_STD); do
+        seed=${SEEDS_STD[$run]}
+        emit_job "F5abl" "$proto" "$sc" "global" "none" "$ablation" "8" "80" "$run" "$seed" ""
+      done
+    done
+  done
+done
+echo "  Fault-5 jobs appended."
+
+# =============================================================================
+# SWEEP 3: Scalability Validation [FAULT-9]
+# Scenario 2 (Moderate), deathfrac=0.625 (proportional to 5/8 of CHs)
+# Sizes: medium (16 CHs, 160 sensors), large (32 CHs, 320 sensors)
+# 2 sizes × 2 protocols × 3 modes × 20 seeds = 240 runs
+# =============================================================================
+echo "=== Generating SWEEP 3: Scalability [FAULT-9] ==="
+for proto in OLSR AODV; do
+  # Medium scale: 16 CHs, 160 sensors
+  for mode in off local global; do
+    for run in $(seq 1 $RUNS_STD); do
+      seed=${SEEDS_STD[$run]}
+      emit_job "F9scale" "$proto" "2" "$mode" "none" "full" "16" "160" "$run" "$seed" "--deathfrac=0.625"
+    done
+  done
+  # Large scale: 32 CHs, 320 sensors
+  for mode in off local global; do
+    for run in $(seq 1 $RUNS_STD); do
+      seed=${SEEDS_STD[$run]}
+      emit_job "F9scale" "$proto" "2" "$mode" "none" "full" "32" "320" "$run" "$seed" "--deathfrac=0.625"
+    done
+  done
+done
+echo "  Fault-9 jobs appended."
+
+# =============================================================================
+# SWEEP 4: Scenario 4 Statistical Strengthening [FAULT-2 & 10]
+# n=20 already done; add 30 more seeds (runs 21-50) for n=50 total.
+# 1 scenario × 3 modes × 2 protocols × 30 extra seeds = 180 runs
+# Seeds use 10^6 spacing starting at run 21 (i.e., seed = 21_000_000 ...).
+# =============================================================================
+echo "=== Generating SWEEP 4: Sc4 Statistical Strengthening [FAULT-2&10] ==="
+for proto in OLSR AODV; do
+  for mode in off local global; do
+    for run in $(seq 21 50); do
+      seed=${SEEDS_SC4_EXTRA[$run]}
+      emit_job "F2F10sc4" "$proto" "4" "$mode" "none" "full" "8" "80" "$run" "$seed" ""
+    done
+  done
+done
+echo "  Fault-2&10 Sc4 jobs appended."
+
+# =============================================================================
+# Summary and execution
+# =============================================================================
+TOTAL_JOBS=$(wc -l < "$JOBS_FILE" | tr -d ' ')
+echo ""
+echo "============================================="
+echo "Total jobs generated: $TOTAL_JOBS"
+echo "Expected:             1140"
+echo "Jobs file:            $JOBS_FILE"
+echo "============================================="
+
+if [ "$TOTAL_JOBS" -ne 1140 ]; then
+  echo "WARNING: Job count mismatch! Expected 1140, got $TOTAL_JOBS."
+  echo "Check sweep logic before proceeding."
+fi
+
+echo ""
+echo "Building NS-3 (single-threaded to avoid collision)..."
+./ns3 build
+if [ $? -ne 0 ]; then
+  echo "ERROR: NS-3 build failed. Aborting."
+  exit 1
+fi
+echo "Build successful."
+
+echo ""
+echo "Starting simulation sweep with $PARALLEL_JOBS parallel jobs..."
+echo "Progress is logged in: $OUTDIR/logs/"
+echo "Manifest: $MANIFEST"
+echo ""
+
+xargs -I CMD -P "$PARALLEL_JOBS" bash -c CMD < "$JOBS_FILE"
+
+echo ""
+echo "============================================="
+echo "Extended sweep complete!"
+echo "Total jobs attempted: $TOTAL_JOBS"
+echo "Check $MANIFEST for per-run status."
+echo "Analyze results with:"
+echo "  python analyze_results.py --dir $OUTDIR/raw --out $OUTDIR/analysis"
+echo "============================================="
