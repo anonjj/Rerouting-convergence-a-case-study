@@ -773,7 +773,9 @@ def main() -> None:
                          "Pass the extended-sweep dirs alongside the main sweep to "
                          "produce the baseline, ablation and scalability tables.")
     ap.add_argument("--out", default="sim_results/analysis_review_ready", help="Output directory for tables and plots")
-    ap.add_argument("--sd-bars", action="store_true", help="Use SD instead of 95% CI in plot error bars")
+    # "%%" is required: argparse runs help strings through %-formatting, and a
+    # bare "95% CI" raises ValueError on --help.
+    ap.add_argument("--sd-bars", action="store_true", help="Use SD instead of 95%% CI in plot error bars")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
