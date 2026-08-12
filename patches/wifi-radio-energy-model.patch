@@ -1,0 +1,78 @@
+--- a/src/wifi/model/wifi-radio-energy-model.cc
++++ b/src/wifi/model/wifi-radio-energy-model.cc
+@@ -119,12 +119,8 @@
+     NS_LOG_FUNCTION(this << source);
+     NS_ASSERT(source);
+     m_source = source;
+-    m_switchToOffEvent.Cancel();
+-    Time durationToOff = GetMaximumTimeInState(m_currentState);
+-    m_switchToOffEvent = Simulator::Schedule(durationToOff,
+-                                             &WifiRadioEnergyModel::ChangeState,
+-                                             this,
+-                                             WifiPhyState::OFF);
++    // [FIX-E3] Do not arm the "assume this state persists forever" self-off
++    // watchdog here. See the matching note in ChangeState() for why.
+ }
+ 
+ double
+@@ -300,15 +296,27 @@
+         return;
+     }
+ 
+-    if (newState != WifiPhyState::OFF)
+-    {
+-        m_switchToOffEvent.Cancel();
+-        Time durationToOff = GetMaximumTimeInState(newState);
+-        m_switchToOffEvent = Simulator::Schedule(durationToOff,
+-                                                 &WifiRadioEnergyModel::ChangeState,
+-                                                 this,
+-                                                 WifiPhyState::OFF);
+-    }
++    // [FIX-E3] Previously this armed a self-scheduled "ChangeState(OFF)" at
++    // now + GetMaximumTimeInState(newState), i.e. "how long until depletion
++    // if this exact state persisted forever". Real, correctly-timed depletion
++    // is already handled independently by BasicEnergySource::UpdateEnergySource()
++    // (its own low/high battery threshold hysteresis, checked on every update
++    // and every PeriodicEnergyUpdateInterval), which calls this model's
++    // HandleEnergyDepletion() -> the installed depletion callback (WifiPhy::
++    // SetOffMode by default) when the SOURCE genuinely crosses its threshold.
++    // This second, heuristic watchdog was redundant with that — and actively
++    // harmful: because it assumes the state just entered (e.g. a ~1ms CCA_BUSY
++    // or RX burst) persists for the *entire* remaining-energy budget, it can
++    // compute a window far shorter than the real time-to-depletion (worse the
++    // higher the per-state current, i.e. worse at higher drainMult). If that
++    // window elapsed before the next real transition arrived, it fired
++    // ChangeState(OFF) directly on the model (bypassing the WifiPhy entirely,
++    // so the real radio kept transmitting/receiving normally). Once fired,
++    // m_currentState latched at OFF permanently: below, SetWifiRadioState()
++    // only runs "if (m_currentState != WifiPhyState::OFF)", so no later,
++    // perfectly legitimate ChangeState() call could ever move it off OFF
++    // again, and GetStateA(OFF) == 0 zeroed all further billing for the rest
++    // of the simulation, silently, with no desync visible at the PHY layer.
+ 
+     Time duration = Simulator::Now() - m_lastUpdateTime;
+     NS_ASSERT(duration.IsPositive()); // check if duration is valid
+@@ -376,15 +384,14 @@
+ {
+     NS_LOG_FUNCTION(this);
+     NS_LOG_DEBUG("WifiRadioEnergyModel:Energy is changed!");
+-    if (m_currentState != WifiPhyState::OFF)
+-    {
+-        m_switchToOffEvent.Cancel();
+-        Time durationToOff = GetMaximumTimeInState(m_currentState);
+-        m_switchToOffEvent = Simulator::Schedule(durationToOff,
+-                                                 &WifiRadioEnergyModel::ChangeState,
+-                                                 this,
+-                                                 WifiPhyState::OFF);
+-    }
++    // [FIX-E3] Previously re-armed the same heuristic self-off watchdog as
++    // ChangeState() (see the note there). This call site fires on nearly
++    // every energy update (BasicEnergySource::NotifyEnergyChanged() runs it
++    // on any remaining-energy delta, not just state transitions), making it
++    // the single most frequent re-arm point and the most likely to leave a
++    // dangerously short window as "last armed" right before a real traffic
++    // lull. Removed for the same reason: real depletion is independently and
++    // correctly handled by BasicEnergySource's own threshold hysteresis.
+ }
+ 
+ WifiRadioEnergyModelPhyListener*
