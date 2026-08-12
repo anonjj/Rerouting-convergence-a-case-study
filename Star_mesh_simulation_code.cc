@@ -398,7 +398,11 @@ int main(int argc, char *argv[]) {
   // Seed-controlled Fisher-Yates shuffle: assignment differs per seed
   Ptr<UniformRandomVariable> shuffleRv = CreateObject<UniformRandomVariable>();
   for (int i = (int)gridCells.size() - 1; i > 0; --i) {
-    int j = (int)(shuffleRv->GetValue(0.0, (double)(i + 1)));
+    // GetInteger(0, i) is inclusive of both ends, which is exactly the index
+    // range Fisher-Yates needs. Do NOT go back to GetValue(0.0, i + 1.0) and
+    // truncate: that can yield exactly i + 1, indexing one past the live range
+    // and corrupting or crashing. This was an observed SIGSEGV.
+    int j = (int)(shuffleRv->GetInteger(0, (uint32_t)i));
     std::swap(gridCells[i], gridCells[j]);
   }
   for (auto &[x, y] : gridCells) {
@@ -700,7 +704,11 @@ int main(int argc, char *argv[]) {
   std::iota(failOrder.begin(), failOrder.end(), 0u);
   Ptr<UniformRandomVariable> failShuffleRv = CreateObject<UniformRandomVariable>();
   for (int i = (int)failOrder.size() - 1; i > 0; --i) {
-    int j = (int)(failShuffleRv->GetValue(0.0, (double)(i + 1)));
+    // Same inclusive-range requirement, and the same trap, as the grid-cell
+    // shuffle above. failOrder is small, so an out-of-range index here is more
+    // likely to corrupt adjacent memory silently than to crash -- which would
+    // mean a plausible-looking run built on a corrupted failure schedule.
+    int j = (int)(failShuffleRv->GetInteger(0, (uint32_t)i));
     std::swap(failOrder[i], failOrder[j]);
   }
   for (uint32_t slot = 0; slot < nFail; ++slot) {
