@@ -459,6 +459,12 @@ int main(int argc, char *argv[]) {
   sensorRadioHelper.Set("RxCurrentA", DoubleValue(0.0197));
   sensorRadioHelper.Set("IdleCurrentA", DoubleValue(0.000426));
   sensorRadioHelper.Set("SleepCurrentA", DoubleValue(0.000014));
+  // Must be set explicitly. ns-3's stock CcaBusyCurrentA default is 0.273 A --
+  // ~640x this radio's idle current -- and leaving it unset drives the
+  // WifiRadioEnergyModel shutoff defect documented in patches/README.md.
+  // Set equal to IdleCurrentA, matching the relationship in ns-3's own stock
+  // defaults (where both are 0.273 A), rescaled to this radio's profile.
+  sensorRadioHelper.Set("CcaBusyCurrentA", DoubleValue(0.000426));
 
   for (uint32_t s = 0; s < numSensors; ++s) {
     sensorRadioHelper.Install(sensorAccessDevices.Get(s),
@@ -467,8 +473,17 @@ int main(int argc, char *argv[]) {
 
   Ptr<UniformRandomVariable> energyJitter =
       CreateObject<UniformRandomVariable>();
-  energyJitter->SetAttribute("Min", DoubleValue(0.90));
-  energyJitter->SetAttribute("Max", DoubleValue(1.10));
+  // Initial-energy jitter exists to break exact ties between CHs. The bounds are
+  // deliberately tight: a CH consumes only ~0.27 J of its 10 J budget over a
+  // 300 s run, so the previous U(0.90, 1.10) spread (2.0 J) was ~7x larger than
+  // the quantity being measured. That made --baseline=energy a near-random
+  // selector, since which CH held the most residual energy was decided almost
+  // entirely by its draw rather than by what it had actually spent.
+  // U(0.995, 1.005) keeps the spread (0.1 J) below consumption while still
+  // breaking ties. Note this is tighter than real battery manufacturing
+  // tolerance (typically +/-2-5%); see README for why that trade-off is made.
+  energyJitter->SetAttribute("Min", DoubleValue(0.995));
+  energyJitter->SetAttribute("Max", DoubleValue(1.005));
 
   EnergySourceContainer chEnergySources;
   for (uint32_t c = 0; c < numCHs; ++c) {
@@ -487,6 +502,11 @@ int main(int argc, char *argv[]) {
   chRadioHelper.Set("RxCurrentA", DoubleValue(0.0197 * chDrainMultiplier));
   chRadioHelper.Set("IdleCurrentA", DoubleValue(0.000426 * 2.0));
   chRadioHelper.Set("SleepCurrentA", DoubleValue(0.000014));
+  // See the sensor block above for why this must be set explicitly. Note the
+  // scaling: CcaBusy is a *passive sensing* current, so like IdleCurrentA it
+  // takes the fixed 2.0 dual-radio hardware factor and NOT chDrainMultiplier,
+  // which applies only to the active Tx/Rx currents.
+  chRadioHelper.Set("CcaBusyCurrentA", DoubleValue(0.000426 * 2.0));
 
   for (uint32_t c = 0; c < numCHs; ++c) {
     chRadioHelper.Install(backboneDevices.Get(c), chEnergySources.Get(c));
@@ -503,6 +523,7 @@ int main(int argc, char *argv[]) {
   gwRadioHelper.Set("RxCurrentA", DoubleValue(0.0197));
   gwRadioHelper.Set("IdleCurrentA", DoubleValue(0.000426));
   gwRadioHelper.Set("SleepCurrentA", DoubleValue(0.000014));
+  gwRadioHelper.Set("CcaBusyCurrentA", DoubleValue(0.000426));  // see sensor block
   gwRadioHelper.Install(backboneDevices.Get(numCHs), gwEnergySources.Get(0));
 
   // ---------------------------------------------------------------------------
