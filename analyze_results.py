@@ -49,7 +49,7 @@ PRIMARY_METRICS = {
     "avg_delay_ms": "Avg Delay (ms)",
     "jain_fairness_index": "Jain Fairness Index",
     "total_consumed_ch_energy_j": "CH Energy Consumed (J)",
-    "energy_per_delivered_bit_j": "Energy/Bit (J/bit)",
+    "energy_per_bit_j": "Energy/Bit (J/bit)",
 }
 GRAF_ONLY_METRICS = {
     "mean_reconv_s": "Service Restoration Latency (s)",
@@ -78,21 +78,63 @@ def parse_summary(path: str) -> Dict[str, object]:
     return data
 
 
-def load_all(results_dir: str) -> pd.DataFrame:
-    pattern = os.path.join(results_dir, "*_summary.csv")
-    rows = [parse_summary(path) for path in sorted(glob.glob(pattern))]
+def derive_arm(row: pd.Series) -> str:
+    """Experimental condition of a run.
+
+    `mode` alone is not enough once the extended sweeps are in play: every
+    competitive-baseline run is --graf=off (mode "Baseline") and every ablation
+    run is --graf=global (mode "GRAF-Global"), so all three baseline strategies
+    -- and all three ablation arms -- would otherwise collapse into a single
+    group and be averaged together.
+    """
+    baseline = str(row.get("baseline", "none") or "none").strip().lower()
+    ablation = str(row.get("ablation", "full") or "full").strip().lower()
+    if baseline != "none":
+        return f"BL-{baseline}"
+    if ablation != "full":
+        return f"ABL-{ablation}"
+    return str(row["mode"])
+
+
+def load_all(results_dirs: Sequence[str]) -> pd.DataFrame:
+    if isinstance(results_dirs, str):
+        results_dirs = [results_dirs]
+    paths: List[str] = []
+    for d in results_dirs:
+        found = sorted(glob.glob(os.path.join(d, "*_summary.csv")))
+        if not found:
+            print(f"WARNING: no *_summary.csv files found in {d}")
+        paths.extend(found)
+    rows = [parse_summary(path) for path in paths]
     rows = [r for r in rows if r]
     if not rows:
-        print(f"ERROR: no *_summary.csv files found in {results_dir}")
+        print(f"ERROR: no *_summary.csv files found in {list(results_dirs)}")
         sys.exit(1)
 
     df = pd.DataFrame(rows)
     if "graf" not in df.columns:
         raise RuntimeError("Missing 'graf' column in summaries.")
 
+    # The simulation renamed this export when it moved to the IEEE
+    # application-bit convention. Accept the old name so pre-rename result sets
+    # still load, but standardise on the current one everywhere downstream.
+    if "energy_per_bit_j" not in df.columns and "energy_per_delivered_bit_j" in df.columns:
+        df["energy_per_bit_j"] = df["energy_per_delivered_bit_j"]
+
     df["mode"] = df["graf"].apply(lambda x: "Baseline" if x == "off" else f"GRAF-{str(x).capitalize()}")
 
-    for col in ["scenario", "seed", "run"]:
+    # Older summaries predate these exports; default them so a mixed set loads.
+    if "baseline" not in df.columns:
+        df["baseline"] = "none"
+    if "ablation" not in df.columns:
+        df["ablation"] = "full"
+    df["baseline"] = df["baseline"].fillna("none").astype(str).str.strip().str.lower()
+    df["ablation"] = df["ablation"].fillna("full").astype(str).str.strip().str.lower()
+    if "num_chs" not in df.columns:
+        df["num_chs"] = 8
+    df["arm"] = df.apply(derive_arm, axis=1)
+
+    for col in ["scenario", "seed", "run", "num_chs"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
 
@@ -103,7 +145,9 @@ def load_all(results_dir: str) -> pd.DataFrame:
         "cluster_recovery_rate_percent", "sensor_recovery_rate_percent",
         "total_recovery_bytes", "jain_fairness_index",
         "total_consumed_ch_energy_j", "total_residual_ch_energy_j",
-        "chs_depleted", "energy_per_delivered_bit_j",
+        "chs_depleted", "energy_per_bit_j", "energy_per_bit_ip_legacy_j",
+        "mean_reconv_eventdriven_s", "n_sensors_eventdriven",
+        "total_initial_ch_energy_j",
         "hb_detected_count", "hb_mean_detection_latency_s",
         "routing_overhead_bytes", "routing_overhead_packets",
         "normalized_overhead_ctrl_per_data",
@@ -112,6 +156,27 @@ def load_all(results_dir: str) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
+
+
+def base_cluster_count(df: pd.DataFrame) -> int:
+    """The Nc the main sweep was run at, as opposed to the scalability sizes."""
+    if "num_chs" not in df.columns or df["num_chs"].dropna().empty:
+        return 8
+    return int(df["num_chs"].dropna().mode().iloc[0])
+
+
+def canonical_subset(df: pd.DataFrame) -> pd.DataFrame:
+    """Run Set A rows only: no competitive baseline, no ablation, base network size.
+
+    The main tables, improvement table, mode-vs-mode significance tests and plots
+    all describe the main sweep. Without this filter, loading several result
+    directories at once would silently fold competitive-baseline and ablation
+    runs into those outputs.
+    """
+    mask = (df["baseline"] == "none") & (df["ablation"] == "full")
+    if "num_chs" in df.columns:
+        mask &= df["num_chs"] == base_cluster_count(df)
+    return df[mask].copy()
 
 
 def valid_series(series: pd.Series, col_name: str) -> pd.Series:
@@ -123,7 +188,8 @@ def valid_series(series: pd.Series, col_name: str) -> pd.Series:
 def format_value(val: float, col_name: str) -> str:
     if pd.isna(val):
         return "N/A"
-    if col_name == "energy_per_delivered_bit_j":
+    if col_name in {"energy_per_bit_j", "energy_per_bit_ip_legacy_j",
+                    "energy_per_delivered_bit_j"}:
         return f"{val:.3e}"
     if col_name in {"normalized_overhead_ctrl_per_data"}:
         return f"{val:.4f}"
@@ -168,7 +234,8 @@ def main_tables(df: pd.DataFrame, out_dir: str) -> Tuple[pd.DataFrame, pd.DataFr
         ("jain_fairness_index", "Jain Fairness Index"),
         ("total_consumed_ch_energy_j", "CH Energy Consumed (J)"),
         ("chs_depleted", "CHs Depleted"),
-        ("energy_per_delivered_bit_j", "Energy/Bit (J/bit)"),
+        ("energy_per_bit_j", "Energy/Bit (J/bit)"),
+        ("mean_reconv_eventdriven_s", "SRL, event-driven (s)"),
         ("hb_detected_count", "HB Detections"),
         ("hb_mean_detection_latency_s", "HB Mean Latency (s)"),
     ]
@@ -217,16 +284,20 @@ def improvement_table(df: pd.DataFrame, out_dir: str) -> pd.DataFrame:
 
 def audit_runs(df: pd.DataFrame) -> None:
     print("\n===== AUDIT =====")
-    required = ["scenario", "protocol", "mode", "run"]
+    # `arm` and `num_chs` are part of the identity of a run, not decoration:
+    # without them the three competitive baselines (all mode "Baseline") and the
+    # three scalability sizes collide on the same key and every one of them is
+    # reported as a duplicate.
+    required = ["scenario", "protocol", "arm", "num_chs", "run"]
     missing_cols = [c for c in required if c not in df.columns]
     if missing_cols:
         print(f"[WARN] Missing columns for full audit: {missing_cols}")
     dup = df[df.duplicated(subset=[c for c in required if c in df.columns], keep=False)]
     if not dup.empty:
-        print("[WARN] Duplicate scenario/protocol/mode/run combinations found:")
+        print("[WARN] Duplicate scenario/protocol/arm/Nc/run combinations found:")
         print(dup[[c for c in required if c in dup.columns]].to_string(index=False))
     else:
-        print("[PASS] No duplicated scenario/protocol/mode/run combinations.")
+        print("[PASS] No duplicated scenario/protocol/arm/Nc/run combinations.")
     issues: List[str] = []
     if (df.get("pdr_percent", pd.Series(dtype=float)) > 100).any():
         issues.append("PDR > 100%")
@@ -502,11 +573,209 @@ def print_metric_story_validation(df: pd.DataFrame) -> None:
     print("Review SRL only inside GRAF-vs-GRAF comparisons; baseline SRL is N/A by design.")
 
 
+BASELINE_ARMS = ["BL-rand", "BL-energy", "BL-nearest"]
+ABLATION_ARMS = ["ABL-energy", "ABL-topo", "ABL-proxcov"]
+ARM_TABLE_COLS = [
+    ("pdr_percent", "PDR (%)"),
+    ("throughput_kbps_active_window", "Throughput (kbps)"),
+    ("avg_delay_ms", "Avg Delay (ms)"),
+    ("mean_reconv_s", "Service Restoration Latency (s)"),
+    ("cluster_recovery_rate_percent", "End-to-End Cluster Recovery (%)"),
+    ("sensor_recovery_rate_percent", "Sensor Recovery (%)"),
+    ("jain_fairness_index", "Jain Fairness Index"),
+    ("total_consumed_ch_energy_j", "CH Energy Consumed (J)"),
+    ("energy_per_bit_j", "Energy/Bit (J/bit)"),
+]
+
+
+def compare_metric(left: pd.DataFrame, right: pd.DataFrame, m_key: str) -> Optional[Dict[str, object]]:
+    """Paired test on seed-matched runs where possible, Welch otherwise.
+
+    Run Set A seeds runs at 1000 + 17*run while the extended sweeps use
+    run * 1e6, so an arm from one set can never pair with an arm from the other.
+    The test actually used is always reported, so an unpaired comparison is
+    never silently presented as a paired one. Returns None when neither test
+    has enough data rather than emitting an empty row.
+    """
+    if m_key not in left.columns or m_key not in right.columns:
+        return None
+    x, y = aligned_pair_values(left, right, m_key)
+    if len(x) >= 2 and len(y) >= 2:
+        t_stat, p_val = st.ttest_rel(x, y)
+        return {"x": x, "y": y, "n": len(x), "test": "paired t",
+                "effect_kind": "dz", "t": float(t_stat), "p": float(p_val),
+                "effect": paired_effect_size(x, y)}
+    xi = valid_series(left[m_key], m_key).to_numpy()
+    yi = valid_series(right[m_key], m_key).to_numpy()
+    if len(xi) < 2 or len(yi) < 2:
+        return None
+    t_stat, p_val = st.ttest_ind(xi, yi, equal_var=False)
+    return {"x": xi, "y": yi, "n": min(len(xi), len(yi)), "test": "Welch t (unpaired)",
+            "effect_kind": "Cohen d", "t": float(t_stat), "p": float(p_val),
+            "effect": independent_effect_size(xi, yi)}
+
+
+def arm_table(df: pd.DataFrame, out_csv: str, title: str) -> pd.DataFrame:
+    """Per-arm summary, keyed by scenario/protocol/Nc/arm rather than by mode."""
+    rows: List[Dict[str, object]] = []
+    for (scen, proto, nchs, arm), g in df.groupby(
+            ["scenario", "protocol", "num_chs", "arm"], dropna=False):
+        row: Dict[str, object] = {
+            "Scenario": int(scen), "Protocol": str(proto),
+            "Nc": int(nchs), "Arm": str(arm),
+        }
+        for src, label in ARM_TABLE_COLS:
+            row[label] = fmt(g[src], src) if src in g.columns else "—"
+        rows.append(row)
+    tbl = pd.DataFrame(rows).sort_values(["Scenario", "Protocol", "Nc", "Arm"]).reset_index(drop=True)
+    tbl.to_csv(out_csv, index=False)
+    print(f"\n===== {title} =====")
+    print(tbl.to_string(index=False))
+    print(f"Saved to {out_csv}")
+    return tbl
+
+
+def compare_arms(df: pd.DataFrame, test_arms: Sequence[str], ref_arm: str,
+                 out_csv: str, title: str) -> pd.DataFrame:
+    """Significance tests of each test arm against a common reference arm."""
+    metrics = dict(PRIMARY_METRICS)
+    metrics.update(GRAF_ONLY_METRICS)
+    rows: List[Dict[str, object]] = []
+    for (scen, proto), g in df.groupby(["scenario", "protocol"]):
+        ref = g[g["arm"] == ref_arm]
+        if ref.empty:
+            continue
+        for arm in test_arms:
+            sub = g[g["arm"] == arm]
+            if sub.empty:
+                continue
+            for m_key, m_label in metrics.items():
+                # SRL and recovery are undefined for runs with no recovery logic.
+                if m_key in GRAF_ONLY_METRICS and str(arm).startswith("BL-"):
+                    continue
+                res = compare_metric(sub, ref, m_key)
+                if res is None:
+                    continue
+                rows.append({
+                    "Scenario": int(scen), "Protocol": str(proto),
+                    "Comparison": f"{arm} vs {ref_arm}", "Metric": m_label,
+                    "Mean Left": float(np.mean(res["x"])),
+                    "Mean Right": float(np.mean(res["y"])),
+                    "Mean Diff (Left-Right)": float(np.mean(res["x"]) - np.mean(res["y"])),
+                    "n": int(res["n"]), "Test": res["test"],
+                    "t-statistic": res["t"], "p-value": res["p"],
+                    "Effect size": res["effect"], "Effect type": res["effect_kind"],
+                })
+    out = pd.DataFrame(rows)
+    if out.empty:
+        print(f"\n===== {title} =====\nNo comparable arms present; skipped.")
+        return out
+    out["Holm-adjusted p"] = holm_correction(out["p-value"].tolist())
+    out["Significant (Holm<0.05)"] = np.where(out["Holm-adjusted p"] < 0.05, "Yes", "No")
+    out = out.sort_values(["Scenario", "Protocol", "Comparison", "Metric"]).reset_index(drop=True)
+    out.to_csv(out_csv, index=False)
+    print(f"\n===== {title} =====")
+    print(out[["Scenario", "Protocol", "Comparison", "Metric",
+               "Mean Diff (Left-Right)", "n", "Test", "Holm-adjusted p",
+               "Effect size", "Significant (Holm<0.05)"]].to_string(index=False))
+    if (out["Test"] == "Welch t (unpaired)").any():
+        print("\n[NOTE] Some comparisons are unpaired. The extended sweeps seed runs at")
+        print("       run*1e6 while the main sweep uses 1000+17*run, so no seed matches")
+        print("       across sets. Add a same-seed reference arm to enable paired tests.")
+    print(f"Saved to {out_csv}")
+    return out
+
+
+def extended_analyses(df: pd.DataFrame, out_dir: str) -> None:
+    """Table X (baselines), Table X-B (ablation) and the scalability table.
+
+    Each is emitted only when its arms are actually present, so a Run-Set-A-only
+    invocation produces exactly the outputs it always did.
+    """
+    present = set(df["arm"].unique())
+    base_nc = base_cluster_count(df)
+
+    bl_arms = [a for a in BASELINE_ARMS if a in present]
+    if bl_arms:
+        sub = df[df["arm"].isin(bl_arms + ["GRAF-Global", "GRAF-Local"])]
+        arm_table(sub, os.path.join(out_dir, "table_x_baselines.csv"),
+                  "TABLE X — COMPETITIVE BASELINES")
+        compare_arms(sub, bl_arms, "GRAF-Global",
+                     os.path.join(out_dir, "table_x_baselines_tests.csv"),
+                     "TABLE X — BASELINE SIGNIFICANCE TESTS")
+
+    abl_arms = [a for a in ABLATION_ARMS if a in present]
+    if abl_arms:
+        sub = df[df["arm"].isin(abl_arms + ["GRAF-Global"])]
+        arm_table(sub, os.path.join(out_dir, "table_xb_ablation.csv"),
+                  "TABLE X-B — FITNESS ABLATION")
+        compare_arms(sub, abl_arms, "GRAF-Global",
+                     os.path.join(out_dir, "table_xb_ablation_tests.csv"),
+                     "TABLE X-B — ABLATION SIGNIFICANCE TESTS")
+
+    if "num_chs" in df.columns and df["num_chs"].nunique(dropna=True) > 1:
+        sub = df[(df["baseline"] == "none") & (df["ablation"] == "full")]
+        arm_table(sub, os.path.join(out_dir, "table_scalability.csv"),
+                  f"SCALABILITY (base Nc={base_nc})")
+
+
+def phase2_checks(df: pd.DataFrame) -> None:
+    """The four post-re-run checks that decide how the paper is written."""
+    print("\n===== PHASE 2 CHECKS =====")
+    canon = canonical_subset(df)
+
+    # 1. CH energy must no longer be identical between arms.
+    if "total_consumed_ch_energy_j" in canon.columns:
+        worst: Optional[float] = None
+        for (_, _), g in canon.groupby(["scenario", "protocol"]):
+            means = g.groupby("arm")["total_consumed_ch_energy_j"].mean().dropna()
+            if len(means) >= 2:
+                spread = float(means.max() - means.min())
+                worst = spread if worst is None else max(worst, spread)
+        if worst is None:
+            print("[SKIP] Energy delta: need at least two arms in a cell.")
+        elif worst > 1e-9:
+            print(f"[PASS] CH energy differs between arms (max spread {worst:.6f} J).")
+        else:
+            print("[FAIL] CH energy is still identical across arms — the fix is not in effect.")
+
+    # 2. FIX-A1 randomisation should give the baseline real topology variance.
+    sc1 = canon[(canon["scenario"] == 1) & (canon["protocol"] == "OLSR") &
+                (canon["arm"] == "Baseline")]
+    if len(sc1) >= 2 and "pdr_percent" in sc1.columns:
+        sd = float(sc1["pdr_percent"].std(ddof=1))
+        verdict = "PASS" if sd > 0.30 else "WARN"
+        print(f"[{verdict}] OLSR Sc1 baseline PDR SD = {sd:.3f} pp (want > 0.30).")
+
+    # 3. Event-driven SRL should agree with the snapshot measure.
+    if {"mean_reconv_s", "mean_reconv_eventdriven_s"}.issubset(canon.columns):
+        both = canon[(canon["mean_reconv_s"] >= 0) & (canon["mean_reconv_eventdriven_s"] >= 0)]
+        if not both.empty:
+            gap = float((both["mean_reconv_s"] - both["mean_reconv_eventdriven_s"]).abs().max())
+            verdict = "PASS" if gap <= 0.5 else "WARN"
+            print(f"[{verdict}] Max |snapshot - event-driven| SRL = {gap:.3f} s (want <= 0.5).")
+        else:
+            print("[SKIP] Event-driven SRL: no runs with both measures defined.")
+
+    # 4. Failures are schedule-injected, so nothing should die of flat battery.
+    if "chs_depleted" in df.columns:
+        n_bad = int((df["chs_depleted"].fillna(0) > 0).sum())
+        if n_bad == 0:
+            print(f"[PASS] chs_depleted == 0 in all {len(df)} runs.")
+        else:
+            print(f"[FAIL] {n_bad} run(s) report chs_depleted > 0 — jitter may be too tight.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Analyze hybrid star-mesh simulation results")
-    ap.add_argument("--dir", default="sim_results/raw", help="Directory containing *_summary.csv files")
+    ap.add_argument("--dir", nargs="+", default=["sim_results/raw"],
+                    help="One or more directories containing *_summary.csv files. "
+                         "Pass the extended-sweep dirs alongside the main sweep to "
+                         "produce the baseline, ablation and scalability tables.")
     ap.add_argument("--out", default="sim_results/analysis_review_ready", help="Output directory for tables and plots")
-    ap.add_argument("--sd-bars", action="store_true", help="Use SD instead of 95% CI in plot error bars")
+    # "%%" is required: argparse runs help strings through %-formatting, and a
+    # bare "95% CI" raises ValueError on --help.
+    ap.add_argument("--sd-bars", action="store_true", help="Use SD instead of 95%% CI in plot error bars")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -515,14 +784,28 @@ def main() -> None:
     print(f"Protocols: {sorted(df['protocol'].dropna().unique())}")
     print(f"Scenarios: {sorted(df['scenario'].dropna().astype(int).unique())}")
     print(f"Modes:     {sorted(df['mode'].dropna().unique())}")
+    print(f"Arms:      {sorted(df['arm'].dropna().unique())}")
+    if "num_chs" in df.columns:
+        print(f"Nc sizes:  {sorted(df['num_chs'].dropna().astype(int).unique())}")
     if 'run' in df.columns:
         print(f"Runs:      {sorted(df['run'].dropna().astype(int).unique())[:5]} ...")
+
     audit_runs(df)
-    main_tables(df, args.out)
-    improvement_table(df, args.out)
-    run_significance_tests(df, args.out)
-    generate_plots(df, args.out, use_ci=not args.sd_bars)
-    print_metric_story_validation(df)
+
+    # The main sweep's own outputs must describe the main sweep only. Competitive
+    # baseline, ablation and scalability runs get their own tables below.
+    canon = canonical_subset(df)
+    if len(canon) != len(df):
+        print(f"\nMain-sweep outputs use {len(canon)} of {len(df)} runs "
+              f"(excluding baseline/ablation/scalability arms).")
+    main_tables(canon, args.out)
+    improvement_table(canon, args.out)
+    run_significance_tests(canon, args.out)
+    generate_plots(canon, args.out, use_ci=not args.sd_bars)
+    print_metric_story_validation(canon)
+
+    extended_analyses(df, args.out)
+    phase2_checks(df)
     print(f"\nAll outputs saved to {args.out}/")
 
 
