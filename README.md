@@ -185,17 +185,23 @@ and revert instructions.
 
 ### A related change: initial-energy jitter
 
-Per-CH initial energy is jittered to break ties. The bounds were narrowed from
-`U(0.90, 1.10)` to **`U(0.995, 1.005)`** in the same revision. A CH consumes only ~0.27 J of
-its 10 J budget over a 300 s run, so the old ±10 % spread (2.0 J) was roughly 7× the quantity
-being measured — which meant `--baseline=energy` was selecting on each CH's random draw
-rather than on the energy it had actually spent.
+Per-CH initial energy is jittered to break ties between otherwise identical CHs. The bounds
+were narrowed from `U(0.90, 1.10)` to **`U(0.995, 1.005)`** in the same revision.
 
-This is tighter than real battery manufacturing tolerance (typically ±2–5 %). That is a
-deliberate trade-off: at this energy budget and run length, any physically realistic
-tolerance would swamp the consumption differences the experiment exists to measure. The
-honest reading is that **the energy term in GRAF's fitness function has limited dynamic range
-under this parameterization**, and results should be interpreted accordingly.
+With the energy model fixed, a Scenario 1 / OLSR run consumes **~21 J across the 8 CHs**
+(roughly 2.6 J per CH against a 10 J budget). The old ±10 % jitter spanned 2.0 J — the same
+order as consumption itself — so which CH held the most residual energy was substantially
+decided by its initial draw rather than by what it had spent, making `--baseline=energy`
+closer to a random selector than an energy-aware one. The new bounds span 0.1 J, a few
+percent of consumption, so residual energy ranks CHs by what they actually spent.
+
+The jitter is deliberately tighter than real battery manufacturing tolerance (typically
+±2–5 %), because its purpose here is tie-breaking rather than modelling production spread.
+
+> **Do not re-derive these bounds from any pre-fix energy figure.** Pre-fix runs under-billed
+> by roughly an order of magnitude. The previously published total of 2.18 J for this
+> configuration is below the ~9.95 J these radios consume *sitting completely idle* for the
+> run, which is on its own sufficient to reject the old measurements.
 
 ---
 
