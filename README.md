@@ -147,21 +147,55 @@ point on, while the real PHY continues transmitting and receiving normally.
 The observable symptom is a per-node energy total that freezes partway through a run and is
 thereafter decoupled from the radio's actual activity and runtime.
 
-The fix has two parts:
+The fix has two parts. **Both are now in this repository**; part 2 has to be applied to your
+own NS-3 tree.
 
-1. **Configuration** — explicitly set the radio current attributes, including
-   `CcaBusyCurrentA`, rather than inheriting stock defaults. Note that
-   `Star_mesh_simulation_code.cc` currently sets only `TxCurrentA`, `RxCurrentA`,
-   `IdleCurrentA`, and `SleepCurrentA`; `CcaBusyCurrentA` is left at the NS-3 default.
-2. **A patch to the NS-3 core** removing the redundant watchdog. This is safe: genuine
-   battery depletion is handled independently and correctly by `BasicEnergySource`'s own
-   threshold logic. The watchdog was a second, defective path to the same outcome.
+**1. Configuration — already in `Star_mesh_simulation_code.cc`.** `CcaBusyCurrentA` is now
+set explicitly on all three radios rather than inheriting NS-3's stock 0.273 A, which is
+~640× this radio's idle current. It is set equal to `IdleCurrentA` on each radio, which
+preserves the relationship in NS-3's own stock defaults (where both are 0.273 A), rescaled
+to this radio's current profile:
 
-> **TODO — neither part has landed in this repository yet.** Both currently exist only on the
-> simulation server. The configuration change will be committed to
-> `Star_mesh_simulation_code.cc`, and the core diff added as
-> `patches/wifi-radio-energy-model.patch` with apply instructions. Until both land, the
-> energy results cannot be reproduced from this repository alone.
+| Radio | `CcaBusyCurrentA` | Scaling |
+|---|---|---|
+| Sensor | `0.000426` | none |
+| CH | `0.000426 * 2.0` | fixed 2.0 dual-radio factor — **not** `chDrainMultiplier` |
+| Gateway | `0.000426` | none |
+
+The CH value deliberately does not take `chDrainMultiplier`. That multiplier models elevated
+*active* duty and applies to `TxCurrentA`/`RxCurrentA` only; CCA_BUSY is a passive sensing
+state and scales like `IdleCurrentA`.
+
+**2. A patch to the NS-3 core** removing the redundant watchdog — committed as
+[`patches/wifi-radio-energy-model.patch`](patches/). This is safe: genuine battery depletion
+is handled independently and correctly by `BasicEnergySource`'s own threshold logic, and this
+simulation installs `BasicEnergySourceHelper` on all three node tiers. The watchdog was a
+second, defective path to the same outcome.
+
+```bash
+cd ~/ns-allinone-3.39/ns-3.39
+patch -p1 --dry-run < /path/to/patches/wifi-radio-energy-model.patch   # verify first
+patch -p1           < /path/to/patches/wifi-radio-energy-model.patch
+./ns3 build
+grep -c 'FIX-E3' src/wifi/model/wifi-radio-energy-model.cc             # expect 3
+```
+
+See [`patches/README.md`](patches/README.md) for the full defect description, the evidence,
+and revert instructions.
+
+### A related change: initial-energy jitter
+
+Per-CH initial energy is jittered to break ties. The bounds were narrowed from
+`U(0.90, 1.10)` to **`U(0.995, 1.005)`** in the same revision. A CH consumes only ~0.27 J of
+its 10 J budget over a 300 s run, so the old ±10 % spread (2.0 J) was roughly 7× the quantity
+being measured — which meant `--baseline=energy` was selecting on each CH's random draw
+rather than on the energy it had actually spent.
+
+This is tighter than real battery manufacturing tolerance (typically ±2–5 %). That is a
+deliberate trade-off: at this energy budget and run length, any physically realistic
+tolerance would swamp the consumption differences the experiment exists to measure. The
+honest reading is that **the energy term in GRAF's fitness function has limited dynamic range
+under this parameterization**, and results should be interpreted accordingly.
 
 ---
 
