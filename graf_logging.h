@@ -207,6 +207,26 @@ void SinkRxCallback(uint32_t sensorIdx, Ptr<const Packet> /*pkt*/,
   }
 }
 
+// ── [DIAG-E2] Per-CH PHY frame counters ───────────────────────────────────
+// Bound to WifiPhy's "PhyTxBegin" / "PhyRxEnd" trace sources, one pair per CH
+// radio. These count state transitions the energy model is supposed to charge
+// for, so a radio with rising frame counts but flat energy proves the
+// WifiRadioEnergyModel is not accumulating, rather than the traffic never
+// having crossed that radio.
+void CountPhyTx(std::vector<uint64_t> *counter, uint32_t idx,
+                Ptr<const Packet> /*pkt*/, double /*txPowerW*/) {
+  if (counter && idx < counter->size()) {
+    (*counter)[idx]++;
+  }
+}
+
+void CountPhyRx(std::vector<uint64_t> *counter, uint32_t idx,
+                Ptr<const Packet> /*pkt*/) {
+  if (counter && idx < counter->size()) {
+    (*counter)[idx]++;
+  }
+}
+
 // ── Routing Overhead Tracking ──────────────────────────────────────────────
 static uint64_t g_routingOverheadBytes = 0;
 static uint64_t g_routingOverheadPackets = 0;
