@@ -477,15 +477,20 @@ int main(int argc, char *argv[]) {
 
   Ptr<UniformRandomVariable> energyJitter =
       CreateObject<UniformRandomVariable>();
-  // Initial-energy jitter exists to break exact ties between CHs. The bounds are
-  // deliberately tight: a CH consumes only ~0.27 J of its 10 J budget over a
-  // 300 s run, so the previous U(0.90, 1.10) spread (2.0 J) was ~7x larger than
-  // the quantity being measured. That made --baseline=energy a near-random
-  // selector, since which CH held the most residual energy was decided almost
-  // entirely by its draw rather than by what it had actually spent.
-  // U(0.995, 1.005) keeps the spread (0.1 J) below consumption while still
-  // breaking ties. Note this is tighter than real battery manufacturing
-  // tolerance (typically +/-2-5%); see README for why that trade-off is made.
+  // Initial-energy jitter exists to break exact ties between CHs, not to model
+  // manufacturing spread. It is kept well below what a CH actually spends so
+  // that residual energy ranks CHs by consumption rather than by their draw.
+  //
+  // Post-fix measurement (Sc1/OLSR/seed 1017 smoke): ~21 J consumed across the
+  // 8 CHs, i.e. roughly 2.6 J per CH against a 10 J budget. The previous
+  // U(0.90, 1.10) gave a 2.0 J spread -- the same order as consumption itself,
+  // enough to decide --baseline=energy on the draw. U(0.995, 1.005) gives a
+  // 0.1 J spread, a few percent of consumption.
+  //
+  // Do not re-derive these bounds from pre-fix energy figures. Those were
+  // produced by the WifiRadioEnergyModel defect described in patches/README.md,
+  // which under-billed by roughly an order of magnitude -- the old published
+  // total of 2.18 J is below the ~9.95 J these radios burn just sitting idle.
   energyJitter->SetAttribute("Min", DoubleValue(0.995));
   energyJitter->SetAttribute("Max", DoubleValue(1.005));
 
