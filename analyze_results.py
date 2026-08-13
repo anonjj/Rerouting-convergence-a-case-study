@@ -57,7 +57,10 @@ GRAF_ONLY_METRICS = {
     "sensor_recovery_rate_percent": "Sensor Recovery (%)",
     "total_recovery_bytes": "App Bytes Recovered Post-Failure",
 }
-PAIR_KEYS = ["scenario", "protocol", "seed", "run"]
+# num_chs belongs here even though the main sweep is single-size: the scalability
+# sweep reuses one seed across its 16- and 32-CH cells, so a merge that omitted it
+# would match each run twice and silently double the reported n.
+PAIR_KEYS = ["scenario", "protocol", "num_chs", "seed", "run"]
 
 
 def parse_summary(path: str) -> Dict[str, object]:
