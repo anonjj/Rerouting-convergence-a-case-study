@@ -190,24 +190,32 @@ int main(int argc, char *argv[]) {
   RngSeedManager::SetSeed(runSeed);
   RngSeedManager::SetRun(runNumber);
 
-  double scenarioEnergyFactor = 1.0;
+  // All scenarios share one CH energy budget. The earlier per-scenario factors
+  // (1.0 / 0.7 / 0.45 / 0.45) were written when the WifiRadioEnergyModel shutoff
+  // defect made real depletion impossible, so they could never bite. With energy
+  // billed correctly they do: a CH that survives all 300 s draws ~4.2 J, which is
+  // above Scenario 3's old 4.5 J budget once BasicEnergySource's 10% low-battery
+  // threshold is applied (it fires at 4.05 J consumed). The survivor's PHY was
+  // then switched OFF mid-run by the depletion callback and aborted on the next
+  // reception -- NS_ASSERT(IsStateIdle() || IsStateCcaBusy()) in
+  // wifi-phy-state-helper.cc. Equalising the budget removes that, and costs
+  // nothing analytically: failures are schedule-injected by KillCH, not energy
+  // driven, and GRAF's energy term normalises as c.energy / maxEnergy -- a ratio,
+  // invariant to a common scale factor. Scenarios differ by failure count and, for
+  // Scenario 4, by radio range.
   uint32_t expectedDeaths = 3;
   switch (failScenario) {
   case 1:
-    scenarioEnergyFactor = 1.0;
     expectedDeaths = 3;
     break;
   case 2:
-    scenarioEnergyFactor = 0.7;
     expectedDeaths = 5;
     break;
   case 3:
-    scenarioEnergyFactor = 0.45;
     expectedDeaths = 7;
     break;
   case 4:
-    scenarioEnergyFactor = 0.45; // Same severe energy drain
-    g_accessMaxRange *= 0.7;     // Reduced radio ranges (harder topology)
+    g_accessMaxRange *= 0.7; // Reduced radio ranges (harder topology)
     g_backboneMaxRange *= 0.7;
     expectedDeaths = 7;
     break;
@@ -230,7 +238,7 @@ int main(int argc, char *argv[]) {
                   << "/" << numCHs);
   }
 
-  double adjustedChEnergy = chInitialEnergy * scenarioEnergyFactor;
+  double adjustedChEnergy = chInitialEnergy;
 
   g_grafMode = grafMode;
   g_simStopTime = simTime;
