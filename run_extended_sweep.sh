@@ -264,7 +264,10 @@ echo "Progress is logged in: $OUTDIR/logs/"
 echo "Manifest: $MANIFEST"
 echo ""
 
-xargs -I CMD -P "$PARALLEL_JOBS" bash -c CMD < "$JOBS_FILE"
+# -0 (null-delimited) disables xargs' own quote processing, which would
+# otherwise eat the single quotes inside each job line. Without it, ns3 receives
+# the simulation's arguments as its own options and every run fails.
+tr '\n' '\0' < "$JOBS_FILE" | xargs -0 -I CMD -P "$PARALLEL_JOBS" bash -c CMD
 
 echo ""
 echo "============================================="

@@ -103,7 +103,9 @@ fi
 tail -3 /tmp/graf_build_ref.log
 
 echo "==> Running $queued jobs, $JOBS at a time"
-xargs -I CMD -P "$JOBS" bash -c CMD < "$JOBS_FILE"
+# -0 (null-delimited) disables xargs' own quote processing, which would
+# otherwise eat the single quotes inside each job line and mangle the command.
+tr '\n' '\0' < "$JOBS_FILE" | xargs -0 -I CMD -P "$JOBS" bash -c CMD
 
 echo
 echo "Done. Summaries: $(ls "$OUTDIR"/raw/*_summary.csv 2>/dev/null | wc -l)"
