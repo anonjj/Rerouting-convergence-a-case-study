@@ -52,6 +52,12 @@ PARALLEL_JOBS="${PARALLEL_JOBS:-3}"                     # Parallel simulation jo
 #   SWEEPS=1 SCENARIOS=3 ./run_extended_sweep.sh                   # 120 runs
 #   SWEEPS=2 SCENARIOS=3 PROTOCOLS=OLSR ./run_extended_sweep.sh    #  60 runs
 #   SWEEPS=3 ./run_extended_sweep.sh                               # 240 runs
+# CH energy budget for the 32-CH scalability cell only -- see the long note at
+# the large-scale block in SWEEP 3 for why it cannot use the 10 J default.
+# Worst observed demand at 32 CHs was ~9.5 J over 300 s; 30 J puts the 10%
+# low-battery threshold at 3 J, which is comfortably below that.
+CH_ENERGY_LARGE="${CH_ENERGY_LARGE:-30}"
+
 SWEEPS="${SWEEPS:-1 2 3 4}"
 SCENARIOS="${SCENARIOS:-1 2 3 4}"
 PROTOCOLS="${PROTOCOLS:-OLSR AODV}"
@@ -75,8 +81,14 @@ mkdir -p "$OUTDIR/raw" "$OUTDIR/logs"
 JOBS_FILE="$OUTDIR/extended_jobs.txt"
 > "$JOBS_FILE"
 
+SKIPPED=0
+QUEUED=0
+
 MANIFEST="$OUTDIR/run_manifest_extended.csv"
-echo "sweep,protocol,scenario,mode,baseline,ablation,num_chs,num_sensors,run,seed,status,logfile,prefix" > "$MANIFEST"
+# Append, don't truncate. A resumed sweep must not erase the record of the runs
+# that came before it -- truncating here is what made a half-finished Set B look
+# like it had zero failures.
+[ -f "$MANIFEST" ] || echo "sweep,protocol,scenario,mode,baseline,ablation,num_chs,num_sensors,run,seed,status,logfile,prefix" > "$MANIFEST"
 
 # ─── Helper: emit one job line ────────────────────────────────────────────────
 # Usage: emit_job SWEEP PROTOCOL SCENARIO MOD BASELINE ABLATION NUMCHS NUMSENSORS RUN SEED [EXTRA_ARGS]
@@ -95,6 +107,16 @@ emit_job() {
 
   local prefix="$OUTDIR/raw/${sweep}_${proto}_sc${sc}_${graf_mode}_bl${baseline}_abl${ablation}_chs${num_chs}_run${run}"
   local logfile="$OUTDIR/logs/${sweep}_${proto}_sc${sc}_${graf_mode}_bl${baseline}_abl${ablation}_chs${num_chs}_run${run}.log"
+
+  # Resumable: skip any cell that already produced a summary. Without this a
+  # sweep that is interrupted -- or that loses one size class to a crash -- has
+  # to redo every completed run to recover the missing ones. Set RESUME=0 to
+  # force a full re-run (e.g. after changing a simulation parameter).
+  if [ "${RESUME:-1}" = "1" ] && compgen -G "${prefix}*_summary.csv" > /dev/null; then
+    SKIPPED=$(( SKIPPED + 1 ))
+    return 0
+  fi
+  QUEUED=$(( QUEUED + 1 ))
 
   local cmd="./ns3 run 'scratch/$SCRATCH_NAME \
     --protocol=$proto \
@@ -190,10 +212,32 @@ for proto in $PROTOCOLS; do
     done
   done
   # Large scale: 32 CHs, 320 sensors
+  #
+  # The 32-CH cell needs a larger CH energy budget than the 10 J default. A
+  # 32-node backbone carries far more routing traffic per CH than an 8- or
+  # 16-node one, and at 10 J the busiest CHs cross BasicEnergySource's 10%
+  # low-battery threshold before the 300 s horizon. The depletion callback then
+  # switches the PHY off mid-reception and the run aborts on
+  #   NS_ASSERT failed, cond="IsStateIdle() || IsStateCcaBusy()"
+  # in wifi-phy-state-helper.cc:414. Every one of the 120 large-scale runs died
+  # this way; a candidate dump at t=275 s showed CHs down to 1.32 J remaining.
+  #
+  # This is a simulation-configuration floor, not a result: CH failures in this
+  # study are schedule-injected (t_fail(k) = 60 + 30k + J_k), so a CH must never
+  # die of depletion -- chs_depleted is expected to be 0 in every run. Raising
+  # the budget does not bias the arm comparison either. GRAF normalises energy
+  # as a ratio (eNorm = c.energy / maxEnergy), so a common scale factor is
+  # invariant, and the scalability table compares off/local/global *within* each
+  # size class, never across sizes. Consumption in Joules is unaffected by the
+  # starting budget, so the energy metrics stay comparable.
+  #
+  # The 16-CH cell is left at the 10 J default: all 120 of its runs completed
+  # with chs_depleted == 0, so it has adequate headroom as-is.
   for mode in off local global; do
     for run in $(seq 1 $RUNS_STD); do
       seed=${SEEDS_STD[$run]}
-      emit_job "F9scale" "$proto" "2" "$mode" "none" "full" "32" "320" "$run" "$seed" "--deathfrac=0.625"
+      emit_job "F9scale" "$proto" "2" "$mode" "none" "full" "32" "320" "$run" "$seed" \
+        "--deathfrac=0.625 --chEnergy=$CH_ENERGY_LARGE"
     done
   done
 done
@@ -227,6 +271,8 @@ echo ""
 echo "============================================="
 echo "Total jobs generated: $TOTAL_JOBS"
 echo "  SWEEPS=$SWEEPS  SCENARIOS=$SCENARIOS  PROTOCOLS=$PROTOCOLS"
+echo "  queued:  $QUEUED"
+echo "  skipped: $SKIPPED (already have a summary; RESUME=0 to force re-run)"
 echo "  (all four sweeps, all scenarios, both protocols = 1380)"
 echo "Per-sweep breakdown:"
 SWEEP_TAGS=("F4base" "F5abl" "F9scale" "F2F10sc4")
