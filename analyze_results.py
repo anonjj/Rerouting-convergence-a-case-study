@@ -368,6 +368,14 @@ def run_significance_tests(df: pd.DataFrame, out_dir: str) -> pd.DataFrame:
         "avg_delay_ms": "Avg Delay (ms)",
         "jain_fairness_index": "Jain Fairness Index",
         "total_consumed_ch_energy_j": "CH Energy Consumed (J)",
+        # Energy per delivered bit belongs in the main sweep, not only in the
+        # arm tables. It is the metric that carries the energy argument -- total
+        # CH energy moves in both directions depending on protocol, so the
+        # per-bit ratio is what shows a consistent improvement -- and without it
+        # here the main sweep produced no test for it anywhere.
+        # compare_arms already covers it via PRIMARY_METRICS, which is why it
+        # appeared in table_x_baselines_tests.csv but not significance_tests.csv.
+        "energy_per_bit_j": "Energy/Bit (J/bit)",
     }
     # graf-only comparisons
     graf_metrics = {
