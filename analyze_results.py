@@ -653,8 +653,18 @@ def compare_arms(df: pd.DataFrame, test_arms: Sequence[str], ref_arm: str,
             if sub.empty:
                 continue
             for m_key, m_label in metrics.items():
-                # SRL and recovery are undefined for runs with no recovery logic.
-                if m_key in GRAF_ONLY_METRICS and str(arm).startswith("BL-"):
+                # SRL and recovery are undefined only for the arm that runs no
+                # recovery logic at all -- --graf=off with --baseline=none, which
+                # derive_arm names "Baseline".
+                #
+                # The competitive baselines are NOT that arm. Star_mesh sets
+                # g_recoveryEnabled = (grafMode != "off" || baselineMode !=
+                # "none"), so every BL-* run rehomes its orphans and exports a
+                # real SRL -- table_x_baselines.csv shows 2.52-2.68 s for them.
+                # Skipping those comparisons suppressed the strongest result
+                # Table X has: GRAF-Global restores service faster than all
+                # three competitive heuristics even where PDR is level.
+                if m_key in GRAF_ONLY_METRICS and str(arm) == "Baseline":
                     continue
                 res = compare_metric(sub, ref, m_key)
                 if res is None:
