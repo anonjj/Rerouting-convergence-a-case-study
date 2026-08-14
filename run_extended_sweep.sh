@@ -141,8 +141,14 @@ emit_job() {
 # [FAULT-2&10] Widely-spaced seeds: seed_i = i * 1,000,000
 # This ensures NS-3 RNG streams are truly independent across replication runs.
 # Standard runs (fault4/5/9): seeds 1..20 with spacing 10^6
+#
+# RUNS_STD is env-overridable so an underpowered cell can be topped up without
+# touching the script. The seed formula is unchanged, so runs 1..20 keep exactly
+# the seeds they were originally given -- raising RUNS_STD only appends new
+# seeds, and the resume guard skips every cell that already has a summary.
+RUNS_STD="${RUNS_STD:-20}"
 declare -a SEEDS_STD
-for i in $(seq 1 20); do
+for i in $(seq 1 "$RUNS_STD"); do
   SEEDS_STD[$i]=$(( i * 1000000 ))
 done
 
@@ -152,7 +158,6 @@ for i in $(seq 21 50); do
   SEEDS_SC4_EXTRA[$i]=$(( i * 1000000 ))
 done
 
-RUNS_STD=20
 RUNS_SC4_EXTRA=30   # runs 21-50
 
 # =============================================================================
