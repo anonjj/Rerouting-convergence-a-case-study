@@ -70,40 +70,52 @@ def valid(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def coverage_report(df: pd.DataFrame) -> pd.DataFrame:
-    """How many sensors the event-driven measurement saw, and whether that is
-    simply the recovery rate restated.
+    """Does the event-driven measurement cover exactly the sensors that recovered?
 
     n_sensors_eventdriven runs far below the sensor count, and is lowest exactly
     where the topology is hardest (Scenario 4 cuts radio ranges by 30%, leaving
     many sensors with no reachable CH to re-home to). That is expected: a sensor
-    that never restores never produces a restoration event, so it cannot
-    contribute to a latency mean.
+    that never restores produces no restoration event and so cannot contribute
+    to a latency mean.
 
-    The question is whether the snapshot estimator uses the same denominator. If
-    n_sensors_eventdriven tracks sensor_recovery_rate_percent, both metrics are
-    conditional on restoration and the low counts are the recovery rate restated
-    -- legitimate, and already reported separately. A large residual would mean
-    the two average over different sensor sets and are not comparable at all.
+    The check is against recovered_sensors, which the simulation exports
+    directly (Star_mesh_simulation_code.cc:1064). An earlier version of this
+    compared against sensor_recovery_rate_percent * num_sensors and reported
+    large negative residuals -- that was wrong, not a finding:
+    sensorRecoveryRate is computed over *affected* sensors
+    (100 * totalRecoveredSensors / totalAffectedSensors, line 995), so scaling
+    it by the full sensor count inflates the expectation by every sensor whose
+    CH never failed. Comparing against recovered_sensors needs no arithmetic and
+    cannot pick the wrong population.
+
+    Grouped by num_chs as well as scenario: Scenario 2 appears at Nc=8 with 80
+    sensors (Set A) and Nc=16 with 160 (Set D), and pooling the two produced a
+    mean expectation above the 80-sensor ceiling.
     """
     if "n_sensors_eventdriven" not in df.columns:
         print("NOTE: n_sensors_eventdriven not exported -- coverage unverifiable.")
         return pd.DataFrame()
     d = df.copy()
     agg = {"n_sensors_eventdriven": ["count", "mean", "min", "max"]}
-    if {"sensor_recovery_rate_percent", "num_sensors"}.issubset(d.columns):
-        d["expected"] = d["sensor_recovery_rate_percent"] / 100.0 * d["num_sensors"]
-        d["residual"] = d["n_sensors_eventdriven"] - d["expected"]
-        agg["expected"] = ["mean"]
-        agg["residual"] = ["mean"]
-    out = d.groupby(["scenario", "protocol"], dropna=False).agg(agg).reset_index()
+    if "recovered_sensors" in d.columns:
+        d["residual"] = d["n_sensors_eventdriven"] - d["recovered_sensors"]
+        agg["recovered_sensors"] = ["mean"]
+        agg["residual"] = ["mean", "min", "max"]
+    if "affected_sensors" in d.columns:
+        agg["affected_sensors"] = ["mean"]
+    keys = [k for k in ("scenario", "protocol", "num_chs") if k in d.columns]
+    out = d.groupby(keys, dropna=False).agg(agg).reset_index()
     out.columns = ["_".join(c).rstrip("_") for c in out.columns.to_flat_index()]
     return out.rename(columns={
         "n_sensors_eventdriven_count": "runs",
         "n_sensors_eventdriven_mean": "mean_sensors",
         "n_sensors_eventdriven_min": "min_sensors",
         "n_sensors_eventdriven_max": "max_sensors",
-        "expected_mean": "expected_from_recov_rate",
-        "residual_mean": "residual",
+        "recovered_sensors_mean": "recovered",
+        "affected_sensors_mean": "affected",
+        "residual_mean": "resid_mean",
+        "residual_min": "resid_min",
+        "residual_max": "resid_max",
     })
 
 
