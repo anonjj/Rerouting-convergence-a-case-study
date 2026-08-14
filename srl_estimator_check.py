@@ -106,7 +106,7 @@ def coverage_report(df: pd.DataFrame) -> pd.DataFrame:
     keys = [k for k in ("scenario", "protocol", "num_chs") if k in d.columns]
     out = d.groupby(keys, dropna=False).agg(agg).reset_index()
     out.columns = ["_".join(c).rstrip("_") for c in out.columns.to_flat_index()]
-    return out.rename(columns={
+    out = out.rename(columns={
         "n_sensors_eventdriven_count": "runs",
         "n_sensors_eventdriven_mean": "mean_sensors",
         "n_sensors_eventdriven_min": "min_sensors",
@@ -117,6 +117,13 @@ def coverage_report(df: pd.DataFrame) -> pd.DataFrame:
         "residual_min": "resid_min",
         "residual_max": "resid_max",
     })
+    # The figure the paper quotes: what fraction of the sensors that actually
+    # recovered the event-driven estimator managed to timestamp. resid_max is 0
+    # in every cell, so this is always a subset -- coverage can only fall short,
+    # never overshoot, and a shortfall drops the sensors that recovered latest.
+    if "recovered" in out.columns:
+        out["coverage_pct"] = 100.0 * out["mean_sensors"] / out["recovered"]
+    return out
 
 
 def agreement_report(df: pd.DataFrame) -> pd.DataFrame:
