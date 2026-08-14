@@ -12,28 +12,25 @@ Every run exports Service Restoration Latency twice:
                              instant each sensor's route is restored
 
 analyze_results.py reports the snapshot value as the primary SRL and carries
-the event-driven one as a secondary row. Across the full result set the two
-disagree by a median of 0.24 s and a mean of 0.34 s, with 24% of runs beyond
-0.5 s and a worst case of 2.06 s -- against a reported SRL of roughly 2.5 s.
-That is too large to leave undisclosed, and the disagreement is one-sided in
-the tail (snapshot > event-driven in every one of the five worst runs), which
-is the signature of grid quantisation rather than noise.
+the event-driven one as a secondary row.
 
-The event-driven measurement is the more precise of the two, and it is the one
-the reviewer asked for. Before the paper switches to it, two things have to be
-established, and this script establishes both:
+MEASURED RESULT (675 runs, all sets)
+------------------------------------
+The two estimators agree in expectation and disagree run to run:
 
-  1. COVERAGE. An event-driven mean taken over a subset of sensors is not
-     comparable to a snapshot mean taken over all of them. If
-     n_sensors_eventdriven is materially below the snapshot's coverage, the
-     event-driven mean is biased by *which* sensors it captured and cannot
-     simply be swapped in.
+    signed mean   -0.062 s      median  -0.039 s      sd  0.456 s
+    snapshot is the larger value in 44.1% of runs
 
-  2. SURVIVAL. The headline claim is GRAF's SRL advantage over the baseline.
-     This recomputes that comparison under both estimators, side by side, so
-     the effect size and significance can be read off directly. If the
-     advantage holds under the event-driven measurement, switching is pure
-     upside; if it narrows, the paper needs to say so.
+That near-even split refutes the grid-quantisation hypothesis. Quantisation can
+only ever delay an observed restoration, so it would force the gap one-sided
+positive; a symmetric spread centred near zero is scatter, not bias. The mean
+absolute gap of 0.34 s looked alarming only because the extreme tail happened to
+be positive -- an artefact of inspecting the five worst runs rather than the
+whole distribution.
+
+The estimators therefore differ in PRECISION, not accuracy, and there is no
+bias-correction argument for switching the paper's primary metric. What remains
+worth checking is whether any conclusion is sensitive to that scatter.
 
 This deliberately writes a separate report instead of changing the analyzer's
 primary metric: the tables, plots and significance tests are already generated
@@ -73,14 +70,41 @@ def valid(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def coverage_report(df: pd.DataFrame) -> pd.DataFrame:
-    """How many sensors the event-driven measurement actually saw."""
+    """How many sensors the event-driven measurement saw, and whether that is
+    simply the recovery rate restated.
+
+    n_sensors_eventdriven runs far below the sensor count, and is lowest exactly
+    where the topology is hardest (Scenario 4 cuts radio ranges by 30%, leaving
+    many sensors with no reachable CH to re-home to). That is expected: a sensor
+    that never restores never produces a restoration event, so it cannot
+    contribute to a latency mean.
+
+    The question is whether the snapshot estimator uses the same denominator. If
+    n_sensors_eventdriven tracks sensor_recovery_rate_percent, both metrics are
+    conditional on restoration and the low counts are the recovery rate restated
+    -- legitimate, and already reported separately. A large residual would mean
+    the two average over different sensor sets and are not comparable at all.
+    """
     if "n_sensors_eventdriven" not in df.columns:
         print("NOTE: n_sensors_eventdriven not exported -- coverage unverifiable.")
         return pd.DataFrame()
-    g = df.groupby(["scenario", "protocol"], dropna=False)["n_sensors_eventdriven"]
-    out = g.agg(["count", "mean", "min", "max"]).reset_index()
-    out.columns = ["scenario", "protocol", "runs", "mean_sensors", "min_sensors", "max_sensors"]
-    return out
+    d = df.copy()
+    agg = {"n_sensors_eventdriven": ["count", "mean", "min", "max"]}
+    if {"sensor_recovery_rate_percent", "num_sensors"}.issubset(d.columns):
+        d["expected"] = d["sensor_recovery_rate_percent"] / 100.0 * d["num_sensors"]
+        d["residual"] = d["n_sensors_eventdriven"] - d["expected"]
+        agg["expected"] = ["mean"]
+        agg["residual"] = ["mean"]
+    out = d.groupby(["scenario", "protocol"], dropna=False).agg(agg).reset_index()
+    out.columns = ["_".join(c).rstrip("_") for c in out.columns.to_flat_index()]
+    return out.rename(columns={
+        "n_sensors_eventdriven_count": "runs",
+        "n_sensors_eventdriven_mean": "mean_sensors",
+        "n_sensors_eventdriven_min": "min_sensors",
+        "n_sensors_eventdriven_max": "max_sensors",
+        "expected_mean": "expected_from_recov_rate",
+        "residual_mean": "residual",
+    })
 
 
 def agreement_report(df: pd.DataFrame) -> pd.DataFrame:
@@ -158,8 +182,10 @@ def main() -> None:
     print(f"  sd     {delta.std():.3f} s")
     print(f"  share where snapshot is the larger of the two: "
           f"{(delta > 0).mean():.1%}")
-    print("  A one-sided positive gap means the snapshot estimator systematically")
-    print("  overstates SRL, which is what grid quantisation would produce.")
+    print("  A near-even split means scatter, not bias: grid quantisation could only")
+    print("  ever delay an observed restoration, forcing a one-sided positive gap.")
+    print("  Symmetric spread rules that out -- the estimators differ in precision,")
+    print("  not accuracy, so there is no bias-correction reason to switch metric.")
 
     cov = coverage_report(df)
     if not cov.empty:
@@ -191,7 +217,7 @@ def main() -> None:
         print("\n=== DO THE SRL COMPARISONS SURVIVE THE SWITCH? ===")
         print("  Each arm vs GRAF-Global, under both estimators. A sign flip or a")
         print("  p crossing 0.05 between the two rows of a pair is what matters.")
-        cols = ["scenario", "protocol", "arm", "estimator",
+        cols = ["scenario", "protocol", "num_chs", "arm", "estimator",
                 "arm_mean", "ref_mean", "delta", "test", "n", "p", "effect"]
         print(surv.sort_values(["scenario", "protocol", "arm", "estimator"])[cols]
               .to_string(index=False))
